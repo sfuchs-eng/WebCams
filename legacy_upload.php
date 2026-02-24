@@ -1,6 +1,8 @@
 <?php
 	
 /*
+... upload handler from a legacy solution. Just for reference, not used in the current solution.
+
 Feedign a file to this script:
 https://medium.com/@petehouston/upload-files-with-curl-93064dcccc76
 E.g. use curl to send POST request, setting the variables "auth", "pic" and "cam" accordingly.
