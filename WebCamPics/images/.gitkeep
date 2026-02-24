@@ -1,0 +1,17 @@
+# Images Directory
+
+This directory stores uploaded images organized by camera MAC address.
+
+Structure:
+```
+images/
+├── AA_BB_CC_DD_EE_FF/
+│   ├── 2024-02-24_10-30-00.jpg
+│   ├── 2024-02-24_11-30-00.jpg
+│   └── ...
+└── 11_22_33_44_55_66/
+    ├── 2024-02-24_10-35-00.jpg
+    └── ...
+```
+
+Directories are automatically created when cameras upload their first image.

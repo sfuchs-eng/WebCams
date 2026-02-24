@@ -1,0 +1,50 @@
+# Deny access to sensitive files and directories
+<FilesMatch "\.(json|log)$">
+    Require all denied
+</FilesMatch>
+
+# Protect config directory
+<DirectoryMatch "^.*/config">
+    Require all denied
+</DirectoryMatch>
+
+# Protect logs directory from direct access
+<DirectoryMatch "^.*/logs">
+    Require all denied
+</DirectoryMatch>
+
+# Allow access to upload endpoint
+<Files "upload.php">
+    Require all granted
+</Files>
+
+# Protect admin panel with HTTP Basic Authentication
+<Files "admin.php">
+    AuthType Basic
+    AuthName "WebCam Admin Panel"
+    # IMPORTANT: Update this path to the absolute filesystem path of your .htpasswd file
+    # Example: /var/www/html/webcams/config/.htpasswd
+    # Current: /home/sfuchs/src/WebCams/WebCamPics/config/.htpasswd
+    AuthUserFile /home/sfuchs/src/WebCams/WebCamPics/config/.htpasswd
+    Require valid-user
+</Files>
+
+# Enable image access
+<FilesMatch "\.(jpg|jpeg|png|gif)$">
+    Require all granted
+    # Cache images for 1 hour
+    Header set Cache-Control "max-age=3600, public"
+</FilesMatch>
+
+# Security headers
+Header always set X-Content-Type-Options "nosniff"
+Header always set X-Frame-Options "SAMEORIGIN"
+Header always set X-XSS-Protection "1; mode=block"
+
+# Disable directory browsing
+Options -Indexes
+
+# Error pages (optional)
+# ErrorDocument 403 /webcams/error.php?code=403
+# ErrorDocument 404 /webcams/error.php?code=404
+# ErrorDocument 500 /webcams/error.php?code=500

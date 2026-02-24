@@ -1,0 +1,22 @@
+{
+  "folders": [
+    {
+      "name": "WebCams (Root)",
+      "path": "."
+    },
+    {
+      "name": "EspCamPicPusher",
+      "path": "EspCamPicPusher"
+    },
+    {
+      "name": "WebCamPics (receiving server)",
+      "path": "WebCamPics"
+    }
+  ],
+  "settings": {
+    "platformio.projectDir": "${workspaceFolder:EspCamPicPusher}",
+    "files.associations": {
+        "*.h": "cpp"
+    }
+  }
+}

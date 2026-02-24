@@ -1,0 +1,14 @@
+{
+    "_example_": {
+        "mac": "AA:BB:CC:DD:EE:FF",
+        "location": "home",
+        "title": "Living Room",
+        "status": "enabled",
+        "rotate": 0,
+        "add_timestamp": true,
+        "add_title": true,
+        "font_size": 16,
+        "font_color": "#FFFFFF",
+        "font_outline": true
+    }
+}

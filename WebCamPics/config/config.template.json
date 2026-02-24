@@ -1,0 +1,20 @@
+{
+    "auth_token": "your_secret_token_here",
+    "timezone": "America/New_York",
+    "image_retention_days": 14,
+    "upload_max_size_mb": 5,
+    "locations": {
+        "home": {
+            "title": "Home",
+            "description": "Home cameras"
+        },
+        "office": {
+            "title": "Office",
+            "description": "Office cameras"
+        },
+        "garden": {
+            "title": "Garden",
+            "description": "Garden view"
+        }
+    }
+}

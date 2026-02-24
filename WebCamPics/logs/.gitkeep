@@ -1,0 +1,8 @@
+# Logs Directory
+
+This directory stores application logs.
+
+- `upload.log` - Image upload records
+- `cleanup.log` - Cleanup operation logs
+
+Logs are automatically created when the application runs.
