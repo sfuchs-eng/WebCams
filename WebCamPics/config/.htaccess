@@ -1,0 +1,2 @@
+# Deny all web access to config directory
+Require all denied

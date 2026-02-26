@@ -3,16 +3,6 @@
     Require all denied
 </FilesMatch>
 
-# Protect config directory
-<DirectoryMatch "^.*/config">
-    Require all denied
-</DirectoryMatch>
-
-# Protect logs directory from direct access
-<DirectoryMatch "^.*/logs">
-    Require all denied
-</DirectoryMatch>
-
 # Allow access to upload endpoint
 <Files "upload.php">
     Require all granted
@@ -24,8 +14,7 @@
     AuthName "WebCam Admin Panel"
     # IMPORTANT: Update this path to the absolute filesystem path of your .htpasswd file
     # Example: /var/www/html/webcams/config/.htpasswd
-    # Current: /home/sfuchs/src/WebCams/WebCamPics/config/.htpasswd
-    AuthUserFile /home/sfuchs/src/WebCams/WebCamPics/config/.htpasswd
+    AuthUserFile /home/gnah/vhost/gnah.ch/httpdocs/cams/config/.htpasswd
     Require valid-user
 </Files>
 

@@ -1,6 +1,9 @@
 {
     "auth_token": "your_secret_token_here",
-    "timezone": "America/New_York",
+    "legacy_tokens": [
+        "your_secret_token_here_for_legacy_support"
+    ],
+    "timezone": "Europe/Zurich",
     "image_retention_days": 14,
     "upload_max_size_mb": 5,
     "locations": {
