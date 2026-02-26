@@ -51,6 +51,12 @@ function createDefaultCameraConfig($identifier) {
     
     // Generate a unique key for the camera
     $sanitized = sanitizeCameraIdentifier($identifier);
+    
+    // Fallback if sanitization fails
+    if ($sanitized === false) {
+        $sanitized = 'cam_' . substr(md5($identifier), 0, 8);
+    }
+    
     $key = 'cam_' . strtolower(str_replace([':', '-', ' '], '', $sanitized));
     
     // Determine if identifier looks like a MAC address

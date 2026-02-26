@@ -11,19 +11,56 @@ function getImagesDir() {
 
 /**
  * Sanitize camera identifier (MAC address or camera name) for use in directory names
- * Allows alphanumeric characters, dots, hyphens, and underscores
+ * Allows alphanumeric characters, hyphens, and underscores (dots and other chars replaced with underscores)
+ * Enforces minimum length of 3 and maximum length of 64 characters
+ * If identifier is too short after sanitization, it's padded with a hash for uniqueness
+ * 
+ * @param string $identifier The camera identifier to sanitize
+ * @return string|false Sanitized identifier or false if validation fails (should not happen in practice)
  */
 function sanitizeCameraIdentifier($identifier) {
     // Remove colons and replace with hyphens (for MAC addresses)
     $identifier = str_replace(':', '-', $identifier);
     // Allow only alphanumeric, dots, hyphens, underscores
     $identifier = preg_replace('/[^a-zA-Z0-9_-]/', '_', $identifier);
+    
+    // Define length constraints
+    $minLength = 3;
+    $maxLength = 64;
+    
+    // Enforce maximum length
+    if (strlen($identifier) > $maxLength) {
+        $identifier = substr($identifier, 0, $maxLength);
+    }
+    
+    // Enforce minimum length
+    if (strlen($identifier) < $minLength) {
+        // Pad with hash of original identifier to ensure uniqueness
+        $hash = substr(md5($identifier), 0, $minLength);
+        $identifier = $identifier . '_' . $hash;
+        // Ensure still within max length after padding
+        if (strlen($identifier) > $maxLength) {
+            $identifier = substr($identifier, 0, $maxLength);
+        }
+    }
+    
+    // Final validation - should not happen, but safety check
+    if (strlen($identifier) < $minLength) {
+        return false;
+    }
+    
     return $identifier;
 }
 
 function getCameraDir($identifier) {
     $baseDir = getImagesDir();
     $safeIdentifier = sanitizeCameraIdentifier($identifier);
+    
+    if ($safeIdentifier === false) {
+        // Fallback to a safe default if sanitization fails
+        $safeIdentifier = 'unknown_' . substr(md5($identifier), 0, 8);
+    }
+    
     return $baseDir . '/' . $safeIdentifier;
 }
 

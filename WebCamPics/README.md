@@ -191,7 +191,7 @@ Edit `config/config.json` to add new locations:
 
 #### POST /upload.php
 
-Upload an image from an ESP32-CAM device.
+Upload an image from an ESP32-CAM device or any other web cam supporting the current interface.
 
 **Headers**:
 - `Authorization: Bearer {AUTH_TOKEN}` (required)
@@ -236,6 +236,9 @@ curl -F "auth=token1" -F "cam=test_cam" -F "pic=@image.jpg" \
 
 **Notes**:
 - Legacy cameras are identified by the `cam` parameter value (sanitized for filesystem use)
+- Camera identifiers are sanitized: only alphanumeric, hyphens, and underscores allowed
+- Minimum identifier length: 3 characters (shorter IDs are padded with a hash)
+- Maximum identifier length: 64 characters (longer IDs are truncated)
 - Images are stored in `images/{cam_name}/` directory
 - Full image processing pipeline is applied (rotation, overlays, etc.)
 - New camera entries are auto-created in `cameras.json` with status "hidden"
