@@ -9,22 +9,34 @@ function getImagesDir() {
     return __DIR__ . '/../images';
 }
 
-function getCameraDir($mac) {
-    $baseDir = getImagesDir();
-    $safeMac = preg_replace('/[^a-zA-Z0-9-]/', '_', $mac);
-    return $baseDir . '/' . $safeMac;
+/**
+ * Sanitize camera identifier (MAC address or camera name) for use in directory names
+ * Allows alphanumeric characters, dots, hyphens, and underscores
+ */
+function sanitizeCameraIdentifier($identifier) {
+    // Remove colons and replace with hyphens (for MAC addresses)
+    $identifier = str_replace(':', '-', $identifier);
+    // Allow only alphanumeric, dots, hyphens, underscores
+    $identifier = preg_replace('/[^a-zA-Z0-9_-]/', '_', $identifier);
+    return $identifier;
 }
 
-function ensureCameraDir($mac) {
-    $dir = getCameraDir($mac);
+function getCameraDir($identifier) {
+    $baseDir = getImagesDir();
+    $safeIdentifier = sanitizeCameraIdentifier($identifier);
+    return $baseDir . '/' . $safeIdentifier;
+}
+
+function ensureCameraDir($identifier) {
+    $dir = getCameraDir($identifier);
     if (!is_dir($dir)) {
         mkdir($dir, 0755, true);
     }
     return $dir;
 }
 
-function saveImage($mac, $imageData, $timestamp = null) {
-    $dir = ensureCameraDir($mac);
+function saveImage($identifier, $imageData, $timestamp = null) {
+    $dir = ensureCameraDir($identifier);
     
     if (!$timestamp) {
         $timestamp = date('Y-m-d_H-i-s');
@@ -45,8 +57,8 @@ function saveImage($mac, $imageData, $timestamp = null) {
     return $rawPath;
 }
 
-function getLatestImage($mac) {
-    $dir = getCameraDir($mac);
+function getLatestImage($identifier) {
+    $dir = getCameraDir($identifier);
     if (!is_dir($dir)) {
         return null;
     }
@@ -63,8 +75,8 @@ function getLatestImage($mac) {
     return $files[0];
 }
 
-function getCameraImages($mac, $days = 14) {
-    $dir = getCameraDir($mac);
+function getCameraImages($identifier, $days = 14) {
+    $dir = getCameraDir($identifier);
     if (!is_dir($dir)) {
         return [];
     }
@@ -101,11 +113,11 @@ function getAllCameras() {
     $dirs = glob($baseDir . '/*', GLOB_ONLYDIR);
     
     foreach ($dirs as $dir) {
-        $mac = basename($dir);
-        $latest = getLatestImage($mac);
+        $identifier = basename($dir);
+        $latest = getLatestImage($identifier);
         if ($latest) {
-            $cameras[$mac] = [
-                'mac' => $mac,
+            $cameras[$identifier] = [
+                'mac' => $identifier,
                 'latest_image' => baseUrl('images/' . basename($dir) . '/' . basename($latest)),
                 'latest_timestamp' => filemtime($latest)
             ];

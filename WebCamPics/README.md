@@ -16,11 +16,7 @@ A PHP-based web application for receiving, processing, and displaying images fro
 - **Image History**: View images from the last 14 days
 - **File-Based Storage**: No database required - uses JSON config and filesystem
 - **Flexible Installation**: Works in any directory - automatically detects its path (root, subdirectory, etc.)
-
-## TODO
-
-- Ensure images are transformed upon upload, not on every view
-- Add legacy POST API support acc. [legacy_upload.php](../legacy_upload.php)
+- **Legacy API Support**: Compatible with legacy multipart/form-data POST interface
 
 ## Installation
 
@@ -55,13 +51,18 @@ A PHP-based web application for receiving, processing, and displaying images fro
    ```json
    {
      "auth_token": "your_secret_token_here",
+     "legacy_tokens": [
+       "token1"
+     ],
      "timezone": "Europe/Zurich",
      "image_retention_days": 14,
      "upload_max_size_mb": 10
    }
    ```
    
-   **Important**: Change the `auth_token` to a secure random string!
+   **Important**: 
+   - Change the `auth_token` to a secure random string!
+   - Add legacy tokens to `legacy_tokens` array if you have cameras using the old POST interface
 
 4. **ESP32-CAM Configuration**:
    
@@ -186,7 +187,9 @@ Edit `config/config.json` to add new locations:
 
 ## API Endpoint
 
-### POST /upload.php
+### Current Interface (Recommended)
+
+#### POST /upload.php
 
 Upload an image from an ESP32-CAM device.
 
@@ -207,6 +210,47 @@ Upload an image from an ESP32-CAM device.
   "size": 123456,
   "filename": "2024-02-24_10-30-00.jpg"
 }
+```
+
+### Legacy Interface (Backward Compatibility)
+
+For existing cameras using the legacy POST interface with multipart/form-data.
+
+#### POST /upload.php (Legacy)
+
+**Content-Type**: `multipart/form-data`
+
+**Parameters**:
+- `auth` (string, required): Authentication token from `legacy_tokens` array in config
+- `cam` (string, required): Camera identifier (e.g., "front_door", "garden_cam")
+- `pic` (file, required): JPEG image file
+- `picname` (string, optional): Ignored - filename is auto-generated from timestamp
+
+**Example using curl**:
+```bash
+curl -F "auth=token1" -F "cam=test_cam" -F "pic=@image.jpg" \
+  http://your-domain.com/webcams/upload.php
+```
+
+**Response**: Same JSON format as current interface
+
+**Notes**:
+- Legacy cameras are identified by the `cam` parameter value (sanitized for filesystem use)
+- Images are stored in `images/{cam_name}/` directory
+- Full image processing pipeline is applied (rotation, overlays, etc.)
+- New camera entries are auto-created in `cameras.json` with status "hidden"
+- Run [test_legacy_upload.sh](test_legacy_upload.sh) to verify legacy interface
+
+### Testing
+
+**Test current interface**:
+```bash
+./test_upload.sh test_image.jpg
+```
+
+**Test legacy interface**:
+```bash
+./test_legacy_upload.sh test_image.jpg my_camera token1
 ```
 
 ## File Structure

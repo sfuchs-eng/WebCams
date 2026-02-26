@@ -26,14 +26,18 @@ function saveCamerasConfig($cameras) {
     return file_put_contents($configFile, json_encode($cameras, JSON_PRETTY_PRINT));
 }
 
-function cameraConfigExists($mac) {
+function cameraConfigExists($identifier) {
     $cameras = loadCamerasConfig();
-    $macNormalized = strtoupper(str_replace(['-', ':'], '', $mac));
+    $identifierNormalized = strtoupper(str_replace(['-', ':', ' '], '', $identifier));
     
     foreach ($cameras as $key => $camera) {
         if ($key === '_example_') continue;
-        $cameraMacNormalized = strtoupper(str_replace(['-', ':'], '', $camera['mac']));
-        if ($cameraMacNormalized === $macNormalized) {
+        
+        // Check if camera identifier matches
+        $cameraIdField = isset($camera['device_id']) ? $camera['device_id'] : $camera['mac'];
+        $cameraIdNormalized = strtoupper(str_replace(['-', ':', ' '], '', $cameraIdField));
+        
+        if ($cameraIdNormalized === $identifierNormalized) {
             return true;
         }
     }
@@ -41,17 +45,22 @@ function cameraConfigExists($mac) {
     return false;
 }
 
-function createDefaultCameraConfig($mac) {
+function createDefaultCameraConfig($identifier) {
+    require_once __DIR__ . '/storage.php';
     $cameras = loadCamerasConfig();
     
     // Generate a unique key for the camera
-    $key = 'cam_' . strtolower(str_replace([':', '-'], '', $mac));
+    $sanitized = sanitizeCameraIdentifier($identifier);
+    $key = 'cam_' . strtolower(str_replace([':', '-', ' '], '', $sanitized));
+    
+    // Determine if identifier looks like a MAC address
+    $isMac = preg_match('/^[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}$/', $identifier);
     
     // Create default config with camera HIDDEN (processed but not shown)
     $cameras[$key] = [
-        'mac' => $mac,
+        'device_id' => $identifier,
         'location' => 'unknown',
-        'title' => 'Camera ' . substr($mac, -8),
+        'title' => $isMac ? 'Camera ' . substr($identifier, -8) : $identifier,
         'status' => 'hidden',  // 3-state: 'disabled', 'hidden', 'enabled'
         'rotate' => 0,
         'add_timestamp' => true,
@@ -61,29 +70,41 @@ function createDefaultCameraConfig($mac) {
         'font_outline' => true
     ];
     
+    // Keep 'mac' field for backward compatibility if it's a MAC address
+    if ($isMac) {
+        $cameras[$key]['mac'] = $identifier;
+    }
+    
     // Save config
     saveCamerasConfig($cameras);
     
     return $cameras[$key];
 }
 
-function getCameraConfig($mac) {
+function getCameraConfig($identifier) {
     $cameras = loadCamerasConfig();
-    $macNormalized = strtoupper(str_replace(['-', ':'], '', $mac));
+    $identifierNormalized = strtoupper(str_replace(['-', ':', ' '], '', $identifier));
     
     foreach ($cameras as $key => $camera) {
         if ($key === '_example_') continue;
-        $cameraMacNormalized = strtoupper(str_replace(['-', ':'], '', $camera['mac']));
-        if ($cameraMacNormalized === $macNormalized) {
+        
+        // Check if camera identifier matches
+        $cameraIdField = isset($camera['device_id']) ? $camera['device_id'] : $camera['mac'];
+        $cameraIdNormalized = strtoupper(str_replace(['-', ':', ' '], '', $cameraIdField));
+        
+        if ($cameraIdNormalized === $identifierNormalized) {
             return $camera;
         }
     }
     
     // Return default config if not found
+    $isMac = preg_match('/^[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}$/', $identifier);
+    
     return [
-        'mac' => $mac,
+        'device_id' => $identifier,
+        'mac' => $isMac ? $identifier : '',
         'location' => 'unknown',
-        'title' => 'Camera ' . substr($mac, -8),
+        'title' => $isMac ? 'Camera ' . substr($identifier, -8) : $identifier,
         'status' => 'enabled',
         'rotate' => 0,
         'add_timestamp' => true,
@@ -110,6 +131,32 @@ function authenticateRequest() {
     }
     
     return false;
+}
+
+/**
+ * Authenticate legacy POST request
+ * Returns camera identifier if authenticated, false otherwise
+ */
+function authenticateLegacyRequest() {
+    $config = loadConfig();
+    if (!$config || !isset($config['legacy_tokens'])) {
+        return false;
+    }
+    
+    if (!isset($_POST['auth']) || !isset($_POST['cam'])) {
+        return false;
+    }
+    
+    $token = $_POST['auth'];
+    $cameraId = $_POST['cam'];
+    
+    // Check if token is valid
+    if (!in_array($token, $config['legacy_tokens'])) {
+        return false;
+    }
+    
+    // Return the camera identifier
+    return $cameraId;
 }
 
 function getDeviceId() {
