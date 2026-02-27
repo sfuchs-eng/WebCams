@@ -23,7 +23,7 @@ if (isset($_POST['auth']) && isset($_POST['cam']) && isset($_FILES['pic'])) {
     $deviceId = authenticateLegacyRequest();
     if ($deviceId === false) {
         http_response_code(401);
-        echo json_encode(['error' => 'Unauthorized']);
+        echo json_encode(['error' => 'Unauthorized legacy request']);
         exit;
     }
     

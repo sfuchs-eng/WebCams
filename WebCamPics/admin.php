@@ -17,27 +17,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action'])) {
         switch ($_POST['action']) {
             case 'save_camera':
-                $mac = $_POST['mac'];
+                $identifier = $_POST['mac'];
                 $cameras = loadCamerasConfig();
                 
                 // Find or create camera entry
                 $key = null;
+                $identifierNormalized = strtoupper(str_replace(['-', ':', ' '], '', $identifier));
+                
                 foreach ($cameras as $k => $cam) {
                     if ($k === '_example_') continue;
-                    $cameraMacNormalized = strtoupper(str_replace(['-', ':'], '', $cam['mac']));
-                    $macNormalized = strtoupper(str_replace(['-', ':'], '', $mac));
-                    if ($cameraMacNormalized === $macNormalized) {
+                    
+                    // Check both device_id and mac fields
+                    $cameraIdField = isset($cam['device_id']) ? $cam['device_id'] : (isset($cam['mac']) ? $cam['mac'] : '');
+                    if (empty($cameraIdField)) continue;
+                    
+                    $cameraMacNormalized = strtoupper(str_replace(['-', ':', ' '], '', $cameraIdField));
+                    if ($cameraMacNormalized === $identifierNormalized) {
                         $key = $k;
                         break;
                     }
                 }
                 
                 if (!$key) {
-                    $key = 'cam_' . strtolower(str_replace([':', '-'], '', $mac));
+                    $key = 'cam_' . strtolower(str_replace([':', '-', ' '], '', $identifier));
                 }
                 
+                // Determine if identifier is a MAC address
+                $isMac = preg_match('/^[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}$/', $identifier);
+                
+                // Always save device_id, and mac field for backward compatibility if it's a MAC
                 $cameras[$key] = [
-                    'mac' => $mac,
+                    'device_id' => $identifier,
                     'location' => $_POST['location'],
                     'title' => $_POST['title'],
                     'status' => $_POST['status'] ?? 'hidden',  // 3-state: disabled, hidden, enabled
@@ -49,6 +59,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'font_outline' => isset($_POST['font_outline'])
                 ];
                 
+                // Add mac field for backward compatibility if it's a MAC address
+                if ($isMac) {
+                    $cameras[$key]['mac'] = $identifier;
+                }
+                
                 if (saveCamerasConfig($cameras)) {
                     $message = 'Camera configuration saved successfully!';
                     $messageType = 'success';
@@ -59,14 +74,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 break;
                 
             case 'delete_camera':
-                $mac = $_POST['mac'];
+                $identifier = $_POST['mac'];
                 $cameras = loadCamerasConfig();
+                
+                $identifierNormalized = strtoupper(str_replace(['-', ':', ' '], '', $identifier));
                 
                 foreach ($cameras as $k => $cam) {
                     if ($k === '_example_') continue;
-                    $cameraMacNormalized = strtoupper(str_replace(['-', ':'], '', $cam['mac']));
-                    $macNormalized = strtoupper(str_replace(['-', ':'], '', $mac));
-                    if ($cameraMacNormalized === $macNormalized) {
+                    
+                    // Check both device_id and mac fields
+                    $cameraIdField = isset($cam['device_id']) ? $cam['device_id'] : (isset($cam['mac']) ? $cam['mac'] : '');
+                    if (empty($cameraIdField)) continue;
+                    
+                    $cameraMacNormalized = strtoupper(str_replace(['-', ':', ' '], '', $cameraIdField));
+                    if ($cameraMacNormalized === $identifierNormalized) {
                         unset($cameras[$k]);
                         break;
                     }
@@ -161,7 +182,7 @@ if ($editMac && isset($cameras[$editMac])) {
                                 </span>
                             </div>
                             <div class="camera-item-details">
-                                <p><strong>MAC:</strong> <?php echo htmlspecialchars($camera['mac']); ?></p>
+                                <p><strong>Identifier:</strong> <?php echo htmlspecialchars(isset($camera['device_id']) ? $camera['device_id'] : $camera['mac']); ?></p>
                                 <p><strong>Location:</strong> <?php echo htmlspecialchars($camera['location']); ?></p>
                                 <p><strong>Rotation:</strong> <?php echo $camera['rotate']; ?>°</p>
                                 <p><strong>Text Overlay:</strong> 
@@ -173,7 +194,7 @@ if ($editMac && isset($cameras[$editMac])) {
                                 <a href="<?php echo baseUrl('admin.php?edit=' . urlencode($mac)); ?>" class="btn btn-small">Edit</a>
                                 <form method="POST" style="display: inline;" onsubmit="return confirm('Delete this camera configuration?');">
                                     <input type="hidden" name="action" value="delete_camera">
-                                    <input type="hidden" name="mac" value="<?php echo htmlspecialchars($mac); ?>">
+                                    <input type="hidden" name="mac" value="<?php echo htmlspecialchars(isset($camera['device_id']) ? $camera['device_id'] : $camera['mac']); ?>">
                                     <button type="submit" class="btn btn-small btn-danger">Delete</button>
                                 </form>
                             </div>
@@ -189,7 +210,7 @@ if ($editMac && isset($cameras[$editMac])) {
             
             <form method="POST">
                 <input type="hidden" name="action" value="save_camera">
-                <input type="hidden" name="mac" value="<?php echo htmlspecialchars($editCamera['mac']); ?>">
+                <input type="hidden" name="mac" value="<?php echo htmlspecialchars(isset($editCamera['device_id']) ? $editCamera['device_id'] : $editCamera['mac']); ?>">
                 
                 <div class="form-group">
                     <label for="title">Camera Title:</label>
