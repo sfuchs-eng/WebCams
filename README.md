@@ -8,6 +8,8 @@ The project consists of three main components:
 - **EspCamPicPusher**: An ESP32-S3-based application that captures images from a connected camera and pushes them to a server via HTTPS POST requests. It's based on the Seeeduino XIAO ESP32S3 Sense board, which includes a built-in OV2640 camera.
 - **RasPiCamPicPusher**: A bash script that runs on a Raspberry Pi with a camera module. It captures images at scheduled intervals and pushes them to the same server endpoint as the ESP32 devices. Hook it up to cron for regular execution.
 
-## Disclaimer
+## Notice
 
-This project is intended for educational and personal use only. It's provided as-is without support and may contain bugs, incomplete features, or security vulnerabilities. It should not be used for any commercial or illegal activities. Always ensure that you have permission to capture and display images from the cameras you are using, and respect privacy laws and regulations in your area. The author is not responsible for any misuse of this project.
+This project is licensed under the MIT License. See the [LICENSE.md](LICENSE.md) file for details.
+
+It's a quick hack dominantly using Claude Sonnet 4.5 for code generation and refactoring. The project is not intended for professional production use but rather as a fun side private project.
