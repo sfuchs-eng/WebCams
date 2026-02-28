@@ -21,15 +21,15 @@ struct CaptureTime {
 // Define capture times (add/remove as needed)
 const CaptureTime CAPTURE_TIMES[] = {
     {8, 0},    // 08:00
-    {12, 0},   // 12:00
-    {16, 0},   // 16:00
-    {20, 0}    // 20:00
+    {11, 0},   // 11:00
+    {15, 0},   // 15:00
+    {17, 0}    // 17:00
 };
 
 const int NUM_CAPTURE_TIMES = sizeof(CAPTURE_TIMES) / sizeof(CaptureTime);
 
 // NTP Update Interval (in milliseconds)
-const unsigned long NTP_UPDATE_INTERVAL = 36000000; // 10 hours
+const unsigned long NTP_UPDATE_INTERVAL = (3600*1000*8); // 8 hours
 
 // Camera Configuration for XIAO ESP32S3 Sense
 #define PWDN_GPIO_NUM     -1
