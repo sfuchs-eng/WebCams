@@ -115,12 +115,6 @@ $cameras = [];
 foreach ($allCameras as $mac => $cameraData) {
     $cameras[$mac] = getCameraConfig($mac);
 }
-
-$editMac = $_GET['edit'] ?? null;
-$editCamera = null;
-if ($editMac && isset($cameras[$editMac])) {
-    $editCamera = $cameras[$editMac];
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -189,7 +183,7 @@ if ($editMac && isset($cameras[$editMac])) {
                                 </p>
                             </div>
                             <div class="camera-item-actions">
-                                <a href="<?php echo baseUrl('admin.php?edit=' . urlencode($mac)); ?>" class="btn btn-small">Edit</a>
+                                <button type="button" class="btn btn-small" onclick="openEditModal('<?php echo htmlspecialchars($mac, ENT_QUOTES); ?>')">Edit</button>
                                 <form method="POST" style="display: inline;" onsubmit="return confirm('Delete this camera configuration?');">
                                     <input type="hidden" name="action" value="delete_camera">
                                     <input type="hidden" name="mac" value="<?php echo htmlspecialchars(isset($camera['device_id']) ? $camera['device_id'] : $camera['mac']); ?>">
@@ -202,101 +196,139 @@ if ($editMac && isset($cameras[$editMac])) {
             <?php endif; ?>
         </section>
         
-        <?php if ($editCamera): ?>
-        <section class="admin-section edit-form">
-            <h2>Edit Camera: <?php echo htmlspecialchars($editCamera['title']); ?></h2>
-            
-            <form method="POST">
-                <input type="hidden" name="action" value="save_camera">
-                <input type="hidden" name="mac" value="<?php echo htmlspecialchars(isset($editCamera['device_id']) ? $editCamera['device_id'] : $editCamera['mac']); ?>">
-                
-                <div class="form-group">
-                    <label for="title">Camera Title:</label>
-                    <input type="text" id="title" name="title" value="<?php echo htmlspecialchars($editCamera['title']); ?>" required>
+        <!-- Edit Camera Modal -->
+        <div id="editModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="modalTitle">Edit Camera</h2>
+                    <button type="button" class="modal-close" onclick="closeEditModal()">&times;</button>
                 </div>
                 
-                <div class="form-group">
-                    <label for="location">Location:</label>
-                    <select id="location" name="location" required>
-                        <?php foreach ($config['locations'] as $locId => $loc): ?>
-                            <option value="<?php echo htmlspecialchars($locId); ?>" 
-                                    <?php echo $locId === $editCamera['location'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($loc['title']); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                
-                <div class="form-group">
-                    <label for="status">Camera Status:</label>
-                    <select id="status" name="status" required>
-                        <?php 
-                            $currentStatus = $editCamera['status'] ?? 'enabled';
-                        ?>
-                        <option value="disabled" <?php echo $currentStatus === 'disabled' ? 'selected' : ''; ?>>
-                            ⊗ Disabled - Images discarded (not stored)
-                        </option>
-                        <option value="hidden" <?php echo $currentStatus === 'hidden' ? 'selected' : ''; ?>>
-                            ◐ Hidden - Images stored but not shown to visitors
-                        </option>
-                        <option value="enabled" <?php echo $currentStatus === 'enabled' ? 'selected' : ''; ?>>
-                            ✓ Enabled - Full functionality (stored and visible)
-                        </option>
-                    </select>
-                </div>
-                
-                <div class="form-group">
-                    <label for="rotate">Rotation (degrees):</label>
-                    <select id="rotate" name="rotate">
-                        <option value="0" <?php echo $editCamera['rotate'] == 0 ? 'selected' : ''; ?>>0°</option>
-                        <option value="90" <?php echo $editCamera['rotate'] == 90 ? 'selected' : ''; ?>>90°</option>
-                        <option value="180" <?php echo $editCamera['rotate'] == 180 ? 'selected' : ''; ?>>180°</option>
-                        <option value="270" <?php echo $editCamera['rotate'] == 270 ? 'selected' : ''; ?>>270°</option>
-                    </select>
-                </div>
-                
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" name="add_title" <?php echo $editCamera['add_title'] ? 'checked' : ''; ?>>
-                        Add Title Overlay
-                    </label>
-                </div>
-                
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" name="add_timestamp" <?php echo $editCamera['add_timestamp'] ? 'checked' : ''; ?>>
-                        Add Timestamp Overlay
-                    </label>
-                </div>
-                
-                <div class="form-group">
-                    <label for="font_size">Font Size:</label>
-                    <input type="number" id="font_size" name="font_size" 
-                           value="<?php echo $editCamera['font_size']; ?>" min="10" max="30">
-                </div>
-                
-                <div class="form-group">
-                    <label for="font_color">Font Color:</label>
-                    <input type="color" id="font_color" name="font_color" 
-                           value="<?php echo $editCamera['font_color']; ?>">
-                </div>
-                
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" name="font_outline" <?php echo $editCamera['font_outline'] ? 'checked' : ''; ?>>
-                        Add Text Outline (for better visibility)
-                    </label>
-                </div>
-                
-                <div class="form-actions">
-                    <button type="submit" class="btn btn-primary">Save Changes</button>
-                    <a href="<?php echo baseUrl('admin.php'); ?>" class="btn">Cancel</a>
-                </div>
-            </form>
-        </section>
-        <?php endif; ?>
+                <form method="POST" id="editCameraForm">
+                    <input type="hidden" name="action" value="save_camera">
+                    <input type="hidden" name="mac" id="edit_mac">
+                    
+                    <div class="form-group">
+                        <label for="edit_title">Camera Title:</label>
+                        <input type="text" id="edit_title" name="title" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_location">Location:</label>
+                        <select id="edit_location" name="location" required>
+                            <?php foreach ($config['locations'] as $locId => $loc): ?>
+                                <option value="<?php echo htmlspecialchars($locId); ?>">
+                                    <?php echo htmlspecialchars($loc['title']); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_status">Camera Status:</label>
+                        <select id="edit_status" name="status" required>
+                            <option value="disabled">⊗ Disabled - Images discarded (not stored)</option>
+                            <option value="hidden">◐ Hidden - Images stored but not shown to visitors</option>
+                            <option value="enabled">✓ Enabled - Full functionality (stored and visible)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_rotate">Rotation (degrees):</label>
+                        <select id="edit_rotate" name="rotate">
+                            <option value="0">0°</option>
+                            <option value="90">90°</option>
+                            <option value="180">180°</option>
+                            <option value="270">270°</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="add_title" id="edit_add_title">
+                            Add Title Overlay
+                        </label>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="add_timestamp" id="edit_add_timestamp">
+                            Add Timestamp Overlay
+                        </label>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_font_size">Font Size:</label>
+                        <input type="number" id="edit_font_size" name="font_size" min="10" max="30">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_font_color">Font Color:</label>
+                        <input type="color" id="edit_font_color" name="font_color">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="font_outline" id="edit_font_outline">
+                            Add Text Outline (for better visibility)
+                        </label>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                        <button type="button" class="btn" onclick="closeEditModal()">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </main>
     
     <?php renderFabMenu(); ?>
+    
+    <script>
+        // Camera data for modal
+        const cameraData = <?php echo json_encode($cameras); ?>;
+        
+        function openEditModal(mac) {
+            const camera = cameraData[mac];
+            if (!camera) return;
+            
+            // Populate form fields
+            document.getElementById('modalTitle').textContent = 'Edit Camera: ' + camera.title;
+            document.getElementById('edit_mac').value = camera.device_id || camera.mac;
+            document.getElementById('edit_title').value = camera.title;
+            document.getElementById('edit_location').value = camera.location;
+            document.getElementById('edit_status').value = camera.status || 'enabled';
+            document.getElementById('edit_rotate').value = camera.rotate;
+            document.getElementById('edit_add_title').checked = camera.add_title;
+            document.getElementById('edit_add_timestamp').checked = camera.add_timestamp;
+            document.getElementById('edit_font_size').value = camera.font_size;
+            document.getElementById('edit_font_color').value = camera.font_color;
+            document.getElementById('edit_font_outline').checked = camera.font_outline;
+            
+            // Show modal
+            document.getElementById('editModal').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+        
+        function closeEditModal() {
+            document.getElementById('editModal').classList.remove('active');
+            document.body.style.overflow = '';
+        }
+        
+        // Close modal on ESC key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeEditModal();
+            }
+        });
+        
+        // Close modal on background click
+        document.getElementById('editModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeEditModal();
+            }
+        });
+    </script>
 </body>
 </html>
