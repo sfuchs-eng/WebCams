@@ -155,8 +155,9 @@ foreach ($allCameras as $mac => $cameraData) {
 </head>
 <body>
     <main class="container">
-        <div class="page-title">
+        <div class="page-title" style="display: flex; justify-content: space-between; align-items: center;">
             <h1>⚙️ Camera Administration</h1>
+            <a href="<?php echo baseUrl('index.php'); ?>" class="home-button" style="font-size: 2em; text-decoration: none;" title="Back to Home">&#x1F3E0;</a>
         </div>
         
         <?php if ($message): ?>

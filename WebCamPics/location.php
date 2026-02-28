@@ -65,8 +65,9 @@ $cameraInfo = $displayCamera ? getCameraConfig($displayCamera) : null;
 </head>
 <body>
     <main class="container">
-        <div class="page-title">
+        <div class="page-title" style="display: flex; justify-content: space-between; align-items: center;">
             <h1>&#x1F30D; <?php echo htmlspecialchars($locationTitle); ?></h1>
+            <a href="<?php echo baseUrl('index.php'); ?>" class="home-button" style="font-size: 2em; text-decoration: none;" title="Back to Home">&#x1F3E0;</a>
         </div>
         
         <?php if (!empty($locationCameras)): ?>
@@ -80,18 +81,6 @@ $cameraInfo = $displayCamera ? getCameraConfig($displayCamera) : null;
                         </a>
                     <?php endforeach; ?>
                 </div>
-            </div>
-            
-            <div class="time-range-selector">
-                <label>&#x23F0; Show last:</label>
-                <a href="<?php echo baseUrl('location.php?location=' . urlencode($locationId) . '&camera=' . urlencode($displayCamera) . '&days=1'); ?>" 
-                   class="time-range <?php echo $days === 1 ? 'active' : ''; ?>">24 hours</a>
-                <a href="<?php echo baseUrl('location.php?location=' . urlencode($locationId) . '&camera=' . urlencode($displayCamera) . '&days=3'); ?>" 
-                   class="time-range <?php echo $days === 3 ? 'active' : ''; ?>">3 days</a>
-                <a href="<?php echo baseUrl('location.php?location=' . urlencode($locationId) . '&camera=' . urlencode($displayCamera) . '&days=7'); ?>" 
-                   class="time-range <?php echo $days === 7 ? 'active' : ''; ?>">7 days</a>
-                <a href="<?php echo baseUrl('location.php?location=' . urlencode($locationId) . '&camera=' . urlencode($displayCamera) . '&days=14'); ?>" 
-                   class="time-range <?php echo $days === 14 ? 'active' : ''; ?>">14 days</a>
             </div>
         <?php endif; ?>
         
