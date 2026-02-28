@@ -186,3 +186,30 @@ function cleanupOldImages($days = 14) {
     
     return $deleted;
 }
+
+/**
+ * Delete all images and directory for a specific camera
+ * 
+ * @param string $identifier Camera identifier (MAC address or device ID)
+ * @return bool True if successful, false otherwise
+ */
+function deleteCameraImages($identifier) {
+    $dir = getCameraDir($identifier);
+    
+    if (!is_dir($dir)) {
+        // Directory doesn't exist, consider it a success
+        return true;
+    }
+    
+    // Delete all files in the directory
+    $files = glob($dir . '/*');
+    foreach ($files as $file) {
+        if (is_file($file)) {
+            unlink($file);
+        }
+    }
+    
+    // Remove the directory itself
+    return rmdir($dir);
+}
+

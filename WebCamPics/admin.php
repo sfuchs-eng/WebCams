@@ -13,6 +13,20 @@ $config = loadConfig();
 $message = '';
 $messageType = '';
 
+// Handle success messages from redirects
+if (isset($_GET['msg'])) {
+    switch ($_GET['msg']) {
+        case 'saved':
+            $message = 'Camera configuration saved successfully!';
+            $messageType = 'success';
+            break;
+        case 'deleted':
+            $message = 'Camera deleted successfully!';
+            $messageType = 'success';
+            break;
+    }
+}
+
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action'])) {
@@ -66,8 +80,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 
                 if (saveCamerasConfig($cameras)) {
-                    $message = 'Camera configuration saved successfully!';
-                    $messageType = 'success';
+                    header('Location: ' . baseUrl('admin.php?msg=saved'));
+                    exit;
                 } else {
                     $message = 'Failed to save camera configuration.';
                     $messageType = 'error';
@@ -79,6 +93,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $cameras = loadCamerasConfig();
                 
                 $identifierNormalized = strtoupper(str_replace(['-', ':', ' '], '', $identifier));
+                $found = false;
+                $keyToDelete = null;
                 
                 foreach ($cameras as $k => $cam) {
                     if ($k === '_example_') continue;
@@ -89,16 +105,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     
                     $cameraMacNormalized = strtoupper(str_replace(['-', ':', ' '], '', $cameraIdField));
                     if ($cameraMacNormalized === $identifierNormalized) {
-                        unset($cameras[$k]);
+                        $keyToDelete = $k;
+                        $found = true;
                         break;
                     }
                 }
                 
-                if (saveCamerasConfig($cameras)) {
-                    $message = 'Camera deleted successfully!';
-                    $messageType = 'success';
+                if ($found && $keyToDelete !== null) {
+                    // Remove from config
+                    unset($cameras[$keyToDelete]);
+                    
+                    // Save updated config
+                    if (saveCamerasConfig($cameras)) {
+                        // Delete all images and directory for this camera
+                        deleteCameraImages($identifier);
+                        
+                        header('Location: ' . baseUrl('admin.php?msg=deleted'));
+                        exit;
+                    } else {
+                        $message = 'Failed to save camera configuration after deletion.';
+                        $messageType = 'error';
+                    }
                 } else {
-                    $message = 'Failed to delete camera.';
+                    $message = 'Camera not found in configuration.';
                     $messageType = 'error';
                 }
                 break;
