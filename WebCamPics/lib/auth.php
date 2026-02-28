@@ -17,6 +17,22 @@ if (!function_exists('getallheaders')) {
     }
 }
 
+/**
+ * Get header value case-insensitively
+ */
+function getHeaderCaseInsensitive($headerName) {
+    $headers = getallheaders();
+    $headerNameLower = strtolower($headerName);
+    
+    foreach ($headers as $name => $value) {
+        if (strtolower($name) === $headerNameLower) {
+            return $value;
+        }
+    }
+    
+    return null;
+}
+
 function loadConfig() {
     $configFile = __DIR__ . '/../config/config.json';
     if (!file_exists($configFile)) {
@@ -141,8 +157,28 @@ function authenticateRequest() {
         return false;
     }
     
-    $headers = getallheaders();
-    $authHeader = isset($headers['Authorization']) ? $headers['Authorization'] : '';
+    // Try multiple sources for auth token (fallback order)
+    $authHeader = '';
+    
+    // 1. Try custom X-Auth-Token header (works with Apache/PHP-FPM)
+    $xAuthToken = getHeaderCaseInsensitive('X-Auth-Token');
+    if ($xAuthToken) {
+        $authHeader = 'Bearer ' . $xAuthToken;
+    }
+    // 2. Try standard Authorization header
+    else {
+        $authorization = getHeaderCaseInsensitive('Authorization');
+        if ($authorization) {
+            $authHeader = $authorization;
+        } 
+        // 3. Try $_SERVER variants
+        elseif (isset($_SERVER['HTTP_AUTHORIZATION'])) {
+            $authHeader = $_SERVER['HTTP_AUTHORIZATION'];
+        } 
+        elseif (isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
+            $authHeader = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
+        }
+    }
     
     // Check Bearer token
     if (preg_match('/Bearer\s+(.+)/', $authHeader, $matches)) {
@@ -180,13 +216,11 @@ function authenticateLegacyRequest() {
 }
 
 function getDeviceId() {
-    $headers = getallheaders();
-    return isset($headers['X-Device-ID']) ? $headers['X-Device-ID'] : null;
+    return getHeaderCaseInsensitive('X-Device-ID');
 }
 
 function getTimestamp() {
-    $headers = getallheaders();
-    return isset($headers['X-Timestamp']) ? $headers['X-Timestamp'] : null;
+    return getHeaderCaseInsensitive('X-Timestamp');
 }
 
 /**

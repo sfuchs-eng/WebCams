@@ -304,7 +304,7 @@ bool captureAndPostImage() {
     
     // Set headers
     http.addHeader("Content-Type", "image/jpeg");
-    http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
+    http.addHeader("X-Auth-Token", AUTH_TOKEN);  // Using X-Auth-Token for Apache/PHP-FPM compatibility
     http.addHeader("X-Device-ID", WiFi.macAddress());
     http.addHeader("X-Timestamp", getFormattedTime());
     
