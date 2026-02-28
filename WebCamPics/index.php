@@ -63,8 +63,8 @@ usort($enabledCameras, function($a, $b) {
                             <span class="timestamp">
                                 <?php echo date('M d, Y H:i:s', $camera['latest_timestamp']); ?>
                             </span>
-                            <span class="mac">
-                                <?php echo htmlspecialchars(substr($camera['mac'], -8)); ?>
+                            <span class="location">
+                                <?php echo htmlspecialchars($camera['location']); ?>
                             </span>
                         </div>
                     </div>

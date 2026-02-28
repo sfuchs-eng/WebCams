@@ -66,12 +66,12 @@ $cameraInfo = $displayCamera ? getCameraConfig($displayCamera) : null;
 <body>
     <main class="container">
         <div class="page-title">
-            <h1>📷 <?php echo htmlspecialchars($locationTitle); ?></h1>
+            <h1>&#x1F30D; <?php echo htmlspecialchars($locationTitle); ?></h1>
         </div>
         
         <?php if (!empty($locationCameras)): ?>
             <div class="camera-selector">
-                <label>Select Camera:</label>
+                <label>&#x1F4F7; Select Camera:</label>
                 <div class="camera-tabs">
                     <?php foreach ($locationCameras as $mac => $camera): ?>
                         <a href="<?php echo baseUrl('location.php?location=' . urlencode($locationId) . '&camera=' . urlencode($mac) . '&days=' . $days); ?>" 
@@ -83,7 +83,7 @@ $cameraInfo = $displayCamera ? getCameraConfig($displayCamera) : null;
             </div>
             
             <div class="time-range-selector">
-                <label>Show last:</label>
+                <label>&#x23F0; Show last:</label>
                 <a href="<?php echo baseUrl('location.php?location=' . urlencode($locationId) . '&camera=' . urlencode($displayCamera) . '&days=1'); ?>" 
                    class="time-range <?php echo $days === 1 ? 'active' : ''; ?>">24 hours</a>
                 <a href="<?php echo baseUrl('location.php?location=' . urlencode($locationId) . '&camera=' . urlencode($displayCamera) . '&days=3'); ?>" 
@@ -92,13 +92,6 @@ $cameraInfo = $displayCamera ? getCameraConfig($displayCamera) : null;
                    class="time-range <?php echo $days === 7 ? 'active' : ''; ?>">7 days</a>
                 <a href="<?php echo baseUrl('location.php?location=' . urlencode($locationId) . '&camera=' . urlencode($displayCamera) . '&days=14'); ?>" 
                    class="time-range <?php echo $days === 14 ? 'active' : ''; ?>">14 days</a>
-            </div>
-        <?php endif; ?>
-        
-        <?php if ($cameraInfo): ?>
-            <div class="camera-details">
-                <h2><?php echo htmlspecialchars($cameraInfo['title']); ?></h2>
-                <p class="camera-mac">MAC: <?php echo htmlspecialchars($cameraInfo['mac']); ?></p>
             </div>
         <?php endif; ?>
         

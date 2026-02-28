@@ -177,7 +177,7 @@ nav a:hover {
     font-weight: 500;
 }
 
-.mac {
+.location {
     font-family: monospace;
     background: var(--bg-color);
     padding: 0.25rem 0.5rem;
