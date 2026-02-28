@@ -759,15 +759,15 @@ footer a:hover {
 /* Floating Action Button (FAB) */
 .fab-container {
     position: fixed;
-    bottom: 2rem;
-    right: 2rem;
+    bottom: 0;
+    right: 0;
     z-index: 1000;
 }
 
 .fab-button {
     width: 56px;
     height: 56px;
-    border-radius: 50%;
+    border-radius: 0;
     background: var(--primary-color);
     color: white;
     border: none;
@@ -868,8 +868,8 @@ body:not(:has(header)) .container {
 /* Mobile adjustments for FAB */
 @media (max-width: 768px) {
     .fab-container {
-        bottom: 1.5rem;
-        right: 1.5rem;
+        bottom: 0;
+        right: 0;
     }
     
     .fab-button {
