@@ -1,6 +1,10 @@
 # WebCam Pics - PHP Web Application
 
-A PHP-based web application for receiving, processing, and displaying images from ESP32-CAM devices.
+A PHP-based web application for receiving, processing, and displaying images from ESP32-CAM or Raspberry Pi cameras sent via HTTP POST in push manner.
+
+A simple solution independent from camera manufacturers' cloud services, running on basic web hosting with PHP support. No database required - uses JSON config and filesystem for storage.
+
+The push approach allows for sporadic image uploads out of private IP networks without needing port forwarding or dynamic DNS.
 
 ## Features
 
