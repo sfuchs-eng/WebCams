@@ -1,7 +1,7 @@
 {
-    "auth_token": "your_secret_token_here",
-    "legacy_tokens": [
-        "your_secret_token_here_for_legacy_support"
+    "auth_tokens": [
+        "your_secret_token_here",
+        "additional_token_if_needed"
     ],
     "timezone": "Europe/Zurich",
     "image_retention_days": 14,

@@ -3,6 +3,20 @@
  * Authentication utilities
  */
 
+// Polyfill for getallheaders() on nginx/php-fpm
+if (!function_exists('getallheaders')) {
+    function getallheaders() {
+        $headers = [];
+        foreach ($_SERVER as $name => $value) {
+            if (substr($name, 0, 5) == 'HTTP_') {
+                $headerName = str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($name, 5)))));
+                $headers[$headerName] = $value;
+            }
+        }
+        return $headers;
+    }
+}
+
 function loadConfig() {
     $configFile = __DIR__ . '/../config/config.json';
     if (!file_exists($configFile)) {
@@ -123,7 +137,7 @@ function getCameraConfig($identifier) {
 
 function authenticateRequest() {
     $config = loadConfig();
-    if (!$config) {
+    if (!$config || !isset($config['auth_tokens'])) {
         return false;
     }
     
@@ -133,7 +147,7 @@ function authenticateRequest() {
     // Check Bearer token
     if (preg_match('/Bearer\s+(.+)/', $authHeader, $matches)) {
         $token = $matches[1];
-        return $token === $config['auth_token'];
+        return in_array($token, $config['auth_tokens']);
     }
     
     return false;
@@ -145,7 +159,7 @@ function authenticateRequest() {
  */
 function authenticateLegacyRequest() {
     $config = loadConfig();
-    if (!$config || !isset($config['legacy_tokens'])) {
+    if (!$config || !isset($config['auth_tokens'])) {
         return false;
     }
     
@@ -157,7 +171,7 @@ function authenticateLegacyRequest() {
     $cameraId = $_POST['cam'];
     
     // Check if token is valid
-    if (!in_array($token, $config['legacy_tokens'])) {
+    if (!in_array($token, $config['auth_tokens'])) {
         return false;
     }
     

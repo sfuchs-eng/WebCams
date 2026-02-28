@@ -146,13 +146,13 @@ if ($editMac && isset($cameras[$editMac])) {
             <h2>Configuration Info</h2>
             <div class="info-box">
                 <p><strong>Upload URL:</strong> <?php echo htmlspecialchars(getUploadUrl()); ?></p>
-                <p><strong>Auth Token:</strong> <code><?php echo htmlspecialchars($config['auth_token']); ?></code></p>
+                <p><strong>Auth Token:</strong> <code><?php echo htmlspecialchars($config['auth_tokens'][0] ?? 'not_configured'); ?></code></p>
                 <p><strong>Image Retention:</strong> <?php echo $config['image_retention_days']; ?> days</p>
             </div>
         </section>
         
         <section class="admin-section">
-            <h2>Detected Cameras</h2>
+            <h2>Cameras</h2>
             
             <?php if (empty($cameras)): ?>
                 <p>No cameras detected yet. Cameras will appear here after sending their first image.</p>

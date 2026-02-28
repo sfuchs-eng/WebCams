@@ -50,9 +50,9 @@ A PHP-based web application for receiving, processing, and displaying images fro
    Copy `config/config_template.json` to `config/config.json` and update settings:
    ```json
    {
-     "auth_token": "your_secret_token_here",
-     "legacy_tokens": [
-       "token1"
+     "auth_tokens": [
+       "your_secret_token_here",
+       "additional_token_if_needed"
      ],
      "timezone": "Europe/Zurich",
      "image_retention_days": 14,
@@ -61,8 +61,9 @@ A PHP-based web application for receiving, processing, and displaying images fro
    ```
    
    **Important**: 
-   - Change the `auth_token` to a secure random string!
-   - Add legacy tokens to `legacy_tokens` array if you have cameras using the old POST interface
+   - Change the tokens in `auth_tokens` array to secure random strings!
+   - All tokens work for both the current API (Bearer authentication) and legacy API (form-data)
+   - You can have multiple tokens for different cameras or for token rotation
 
 4. **ESP32-CAM Configuration**:
    
@@ -221,7 +222,7 @@ For existing cameras using the legacy POST interface with multipart/form-data.
 **Content-Type**: `multipart/form-data`
 
 **Parameters**:
-- `auth` (string, required): Authentication token from `legacy_tokens` array in config
+- `auth` (string, required): Authentication token from `auth_tokens` array in config
 - `cam` (string, required): Camera identifier (e.g., "front_door", "garden_cam")
 - `pic` (file, required): JPEG image file
 - `picname` (string, optional): Ignored - filename is auto-generated from timestamp

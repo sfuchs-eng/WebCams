@@ -27,6 +27,7 @@ body {
     background-color: var(--bg-color);
     color: var(--text-primary);
     line-height: 1.6;
+    overflow-x: hidden;
 }
 
 /* Header */
@@ -67,8 +68,10 @@ nav a:hover {
 /* Main Container */
 .container {
     max-width: 1400px;
+    width: 100%;
     margin: 0 auto;
     padding: 1rem;
+    overflow-wrap: break-word;
 }
 
 /* Empty State */
@@ -349,6 +352,8 @@ nav a:hover {
     padding: 1rem;
     border-radius: 0.25rem;
     border-left: 4px solid var(--primary-color);
+    overflow-wrap: break-word;
+    word-wrap: break-word;
 }
 
 .info-box p {
@@ -361,20 +366,36 @@ nav a:hover {
     border-radius: 0.25rem;
     font-family: monospace;
     color: var(--primary-color);
+    word-break: break-all;
+    overflow-wrap: break-word;
+    white-space: normal;
+    display: inline-block;
+    max-width: 100%;
 }
 
 /* Camera List */
 .camera-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1.5rem;
+    margin-top: 1rem;
 }
 
 .camera-item {
     background: var(--bg-color);
-    padding: 1rem;
-    border-radius: 0.5rem;
+    padding: 1.25rem;
+    border-radius: 0.75rem;
     border: 1px solid var(--border-color);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    min-height: 220px;
+}
+
+.camera-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .camera-item-header {
@@ -413,16 +434,22 @@ nav a:hover {
     margin: 1rem 0;
     font-size: 0.875rem;
     color: var(--text-secondary);
+    word-break: break-word;
+    overflow-wrap: break-word;
+    flex-grow: 1;
 }
 
 .camera-item-details p {
-    margin-bottom: 0.25rem;
+    margin-bottom: 0.5rem;
 }
 
 .camera-item-actions {
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
+    margin-top: auto;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
 }
 
 /* Forms */
@@ -682,11 +709,13 @@ footer a:hover {
     }
     
     .camera-item {
-        padding: 0.75rem;
+        padding: 1rem;
+        min-height: auto;
     }
     
     .camera-list {
-        gap: 0.75rem;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1rem;
     }
     
     .info-box {
@@ -848,5 +877,13 @@ body:not(:has(header)) .container {
     
     .fab-menu-item {
         padding: 0.75rem 1rem;
+    }
+}
+
+/* Very small screens - single column grid */
+@media (max-width: 480px) {
+    .camera-list {
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
     }
 }
