@@ -7,6 +7,7 @@
 require_once __DIR__ . '/lib/auth.php';
 require_once __DIR__ . '/lib/storage.php';
 require_once __DIR__ . '/lib/path.php';
+require_once __DIR__ . '/lib/fab-menu.php';
 
 $config = loadConfig();
 $message = '';
@@ -130,14 +131,11 @@ if ($editMac && isset($cameras[$editMac])) {
     <link rel="stylesheet" href="<?php echo baseUrl('assets/style.css'); ?>">
 </head>
 <body>
-    <header>
-        <h1>⚙️ Camera Administration</h1>
-        <nav>
-            <a href="<?php echo baseUrl('index.php'); ?>">← Back to Viewer</a>
-        </nav>
-    </header>
-    
     <main class="container">
+        <div class="page-title">
+            <h1>⚙️ Camera Administration</h1>
+        </div>
+        
         <?php if ($message): ?>
             <div class="message <?php echo $messageType; ?>">
                 <?php echo htmlspecialchars($message); ?>
@@ -299,8 +297,6 @@ if ($editMac && isset($cameras[$editMac])) {
         <?php endif; ?>
     </main>
     
-    <footer>
-        <p><a href="<?php echo baseUrl('index.php'); ?>">← Back to Viewer</a></p>
-    </footer>
+    <?php renderFabMenu(); ?>
 </body>
 </html>

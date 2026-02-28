@@ -718,3 +718,135 @@ footer a:hover {
         padding: 1.5rem 0.5rem;
     }
 }
+
+/* Floating Action Button (FAB) */
+.fab-container {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    z-index: 1000;
+}
+
+.fab-button {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    font-size: 1.5rem;
+}
+
+.fab-button:hover {
+    background: var(--primary-hover);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2), 0 3px 6px rgba(0, 0, 0, 0.15);
+    transform: scale(1.05);
+}
+
+.fab-button:active {
+    transform: scale(0.95);
+}
+
+.fab-button.open {
+    transform: rotate(90deg);
+}
+
+.fab-icon-hamburger {
+    transition: transform 0.3s ease;
+}
+
+.fab-menu {
+    position: absolute;
+    bottom: 70px;
+    right: 0;
+    background: var(--card-bg);
+    border-radius: 0.5rem;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(10px);
+    transition: all 0.3s ease;
+    min-width: 160px;
+    overflow: hidden;
+}
+
+.fab-menu.open {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.fab-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.875rem 1.25rem;
+    color: var(--text-primary);
+    text-decoration: none;
+    transition: background 0.2s ease;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.fab-menu-item:last-child {
+    border-bottom: none;
+}
+
+.fab-menu-item:hover {
+    background: var(--bg-color);
+}
+
+.fab-menu-item .fab-icon {
+    font-size: 1.25rem;
+    width: 24px;
+    text-align: center;
+}
+
+.fab-menu-item .fab-label {
+    font-weight: 500;
+    font-size: 0.9375rem;
+}
+
+/* Adjust main container padding when no header */
+body:not(:has(header)) .container {
+    padding-top: 1rem;
+}
+
+/* Page title for pages without header */
+.page-title {
+    margin-bottom: 1.5rem;
+}
+
+.page-title h1 {
+    font-size: 1.75rem;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+/* Mobile adjustments for FAB */
+@media (max-width: 768px) {
+    .fab-container {
+        bottom: 1.5rem;
+        right: 1.5rem;
+    }
+    
+    .fab-button {
+        width: 48px;
+        height: 48px;
+        font-size: 1.25rem;
+    }
+    
+    .fab-menu {
+        bottom: 62px;
+        min-width: 140px;
+    }
+    
+    .fab-menu-item {
+        padding: 0.75rem 1rem;
+    }
+}
