@@ -294,16 +294,63 @@ void WebConfigServer::handleTestConfig(AsyncWebServerRequest* request, uint8_t* 
     
     String ssid = doc["wifiSsid"].as<String>();
     String password = "";
+    bool passwordChanged = false;
     
     if (doc.containsKey("wifiPassword")) {
         password = doc["wifiPassword"].as<String>();
         // If password is placeholder, use current password
         if (password == "********") {
             password = String(configManager->getWifiPassword());
+        } else {
+            passwordChanged = true;
         }
     }
     
-    Serial.printf("Testing connection to: %s\n", ssid.c_str());
+    // Check if credentials are same as current configuration
+    String currentSsid = String(configManager->getWifiSsid());
+    String currentPassword = String(configManager->getWifiPassword());
+    bool credentialsUnchanged = (ssid == currentSsid) && 
+                                 (!passwordChanged || password == currentPassword);
+    
+    // If already in STA mode (not AP mode)
+    if (!isApMode) {
+        if (credentialsUnchanged) {
+            // Same credentials, check if currently connected
+            if (WiFi.status() == WL_CONNECTED) {
+                Serial.println("WiFi credentials unchanged and already connected");
+                String response = "{\"success\":true,\"connected\":true,\"ip\":\"" + 
+                                 WiFi.localIP().toString() + 
+                                 "\",\"rssi\":" + String(WiFi.RSSI()) + 
+                                 ",\"message\":\"Already connected with this WiFi configuration\",\"unchanged\":true}";
+                request->send(200, "application/json", response);
+                return;
+            }
+        }
+        
+        // Different credentials in STA mode - save and tell user to reboot
+        Serial.println("WiFi credentials changed in STA mode, saving configuration");
+        
+        // Update config with new credentials
+        if (configManager->loadFromJson(body.c_str())) {
+            if (configManager->save()) {
+                Serial.println("Configuration saved, reboot required");
+                request->send(200, "application/json", 
+                    "{\"success\":true,\"connected\":false,\"message\":\"Configuration saved. Please reboot to apply WiFi changes.\",\"needsReboot\":true}");
+                return;
+            } else {
+                request->send(500, "application/json", 
+                    "{\"success\":false,\"connected\":false,\"message\":\"Failed to save configuration\"}");
+                return;
+            }
+        } else {
+            request->send(400, "application/json", 
+                "{\"success\":false,\"connected\":false,\"message\":\"Invalid configuration\"}");
+            return;
+        }
+    }
+    
+    // In AP mode - test the connection live
+    Serial.printf("Testing connection to: %s (AP mode)\n", ssid.c_str());
     
     // Test WiFi connection
     WiFi.begin(ssid.c_str(), password.c_str());
@@ -335,7 +382,7 @@ void WebConfigServer::handleTestConfig(AsyncWebServerRequest* request, uint8_t* 
         
         // Try to reconnect to original WiFi if in AP+STA mode
         String originalSsid = String(configManager->getWifiSsid());
-        if (isApMode && originalSsid.length() > 0) {
+        if (originalSsid.length() > 0) {
             Serial.printf("Reconnecting to original WiFi: %s\n", originalSsid.c_str());
             WiFi.begin(originalSsid.c_str(), configManager->getWifiPassword());
         }
@@ -631,20 +678,41 @@ String WebConfigServer::generateHtmlPage() {
             font-size: 14px;
         }
         .message {
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 15px;
+            position: fixed;
+            bottom: 0;
+            right: 0;
+            padding: 15px 20px;
+            border-radius: 0;
             display: none;
+            z-index: 9999;
+            min-width: 300px;
+            max-width: 500px;
+            box-shadow: -2px -2px 10px rgba(0,0,0,0.2);
+            animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
         }
         .message.success {
             background: #d4edda;
             color: #155724;
             border: 1px solid #c3e6cb;
+            border-right: none;
+            border-bottom: none;
         }
         .message.error {
             background: #f8d7da;
             color: #721c24;
             border: 1px solid #f5c6cb;
+            border-right: none;
+            border-bottom: none;
         }
         .preview-container {
             margin-top: 15px;

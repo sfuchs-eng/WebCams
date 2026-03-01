@@ -24,6 +24,10 @@ if (isset($_GET['msg'])) {
             $message = 'Camera deleted successfully!';
             $messageType = 'success';
             break;
+        case 'purged':
+            $message = 'Camera images purged successfully!';
+            $messageType = 'success';
+            break;
     }
 }
 
@@ -131,6 +135,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $messageType = 'error';
                 }
                 break;
+                
+            case 'purge_images':
+                $identifier = $_POST['mac'];
+                
+                // Delete all images for this camera
+                deleteCameraImages($identifier);
+                
+                header('Location: ' . baseUrl('admin.php?msg=purged'));
+                exit;
+                break;
         }
     }
 }
@@ -214,6 +228,11 @@ foreach ($allCameras as $mac => $cameraData) {
                             </div>
                             <div class="camera-item-actions">
                                 <button type="button" class="btn btn-small" onclick="openEditModal('<?php echo htmlspecialchars($mac, ENT_QUOTES); ?>')">Edit</button>
+                                <form method="POST" style="display: inline;" onsubmit="return confirm('Purge all stored images for this camera?');">
+                                    <input type="hidden" name="action" value="purge_images">
+                                    <input type="hidden" name="mac" value="<?php echo htmlspecialchars(isset($camera['device_id']) ? $camera['device_id'] : $camera['mac']); ?>">
+                                    <button type="submit" class="btn btn-small btn-warning">Purge img</button>
+                                </form>
                                 <form method="POST" style="display: inline;" onsubmit="return confirm('Delete this camera configuration?');">
                                     <input type="hidden" name="action" value="delete_camera">
                                     <input type="hidden" name="mac" value="<?php echo htmlspecialchars(isset($camera['device_id']) ? $camera['device_id'] : $camera['mac']); ?>">
