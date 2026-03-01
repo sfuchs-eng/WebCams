@@ -6,18 +6,27 @@ This project is a Seeeduino XIAO ESP32S3 Sense application that captures images 
 
 - **Web Configuration Mode**: On power-up, provides a 15-minute web interface for runtime configuration
   - Configure WiFi credentials, server URL, authentication token
-  - Modify capture schedule times
+  - Optional HTTP Basic Auth protection for configuration changes
+  - Modify capture schedule times (automatically sorted by time of day)
   - Adjust timezone settings and power management
   - Manual image capture with live preview
+  - Manual capture & push to server
+  - Real-time device status (IP, time, heap, signal strength)
   - Activity-based timeout (resets on any HTTP request)
+  - Responsive to schedule changes (checks every 10 seconds)
 - **Deep Sleep Power Management**: Ultra-low power consumption (~10-150 µA) between scheduled captures
   - Automatically wakes ~60 seconds before scheduled capture time
   - Smart waiting mode when captures are close together (<5 minutes)
   - ~99% power reduction compared to always-on operation
+- **Thread-Safe Camera Access**: FreeRTOS mutex protection prevents concurrent access corruption
+  - Protects against race conditions between web preview and scheduled captures
+  - Ensures image integrity on dual-core ESP32-S3
 - **NVS Configuration Storage**: All settings stored persistently in ESP32 non-volatile memory
 - **WiFi Infrastructure Mode**: Connects to your WiFi network using configurable credentials
 - **NTP Time Synchronization**: Automatically updates time from NTP servers (minimized during sleep)
 - **Scheduled Image Capture**: Captures images at configured times throughout the day (up to 24 times)
+  - Executes even while in CONFIG mode if schedule time arrives
+  - Prevents duplicate captures within the same minute
 - **HTTPS Upload**: Posts captured images to a server endpoint with token-based authentication
 - **OV2640 Camera Support**: Optimized for the XIAO ESP32S3 Sense built-in camera
 - **Error Recovery**: Automatically enters configuration mode after 3 consecutive capture failures
@@ -38,9 +47,13 @@ This project is a Seeeduino XIAO ESP32S3 Sense application that captures images 
 4. **Browse** to `http://<DEVICE_IP>/` and configure via web UI:
    - WiFi credentials
    - Server URL and authentication token
-   - Capture schedule times
+   - Capture schedule times (automatically sorted chronologically)
    - Timezone settings
-5. **Save** configuration - Device enters deep sleep mode and wakes for scheduled captures
+   - Web authentication (optional username/password protection)
+5. **Test** using manual capture buttons:
+   - "Capture & Preview" to test camera without uploading
+   - "Capture & Push to Server" to test full upload pipeline
+6. **Save** configuration - Device enters deep sleep mode and wakes for scheduled captures
 
 ### Advanced: Pre-Configure Defaults (Optional)
 
@@ -164,9 +177,13 @@ The device operates in three distinct modes:
 - **Access**: Browse to `http://<DEVICE_IP>/`
 - **Features**:
   - Full configuration interface
+  - Schedule editor with automatic time sorting
   - Manual image capture with preview
-  - Real-time device status
+  - Manual capture & push to server
+  - Real-time device status (IP, local time, heap, signal, timeout)
+  - Optional HTTP Basic Auth protection
   - Factory reset option
+  - **Responsive to schedule**: Checks every 10 seconds and executes captures even while web UI is active
 - **Exit**: After timeout, transitions to CAPTURE or WAIT mode depending on next scheduled capture time
 
 #### 2. CAPTURE Mode (Quick Capture)
@@ -203,28 +220,73 @@ The device operates in three distinct modes:
 - **CAPTURE Mode**: ~200 mA peak (camera + WiFi)
 - **Battery Life Example**: ~68 days on 2000 mAh battery with 4 captures/day (vs. 16 hours always-on)
 
+## Architecture
+
+### Library Structure
+
+The project is organized into modular libraries for maintainability:
+
+- **ConfigManager**: NVS-backed configuration storage and JSON serialization
+- **ScheduleManager**: Time-based scheduling calculations and NTP sync
+- **SleepManager**: Deep sleep control with RTC memory persistence
+- **WebConfigServer**: Async HTTP server with web UI and REST API
+- **CameraMutex**: Thread-safe camera access wrapper using FreeRTOS semaphores
+
+### Thread Safety
+
+The ESP32-S3 is a dual-core processor. The async web server runs on a different core than the main application loop, which can cause race conditions when both try to access the camera simultaneously.
+
+**CameraMutex** provides protection:
+- Wraps camera access with FreeRTOS mutex (semaphore)
+- Used in `handlePreview()` for web UI preview
+- Used in `captureAndPostImage()` for scheduled captures
+- Prevents concurrent access that would corrupt frame buffers
+- Returns timeout error if camera is busy (rather than crashing)
+
+**Frame Buffer Management**:
+- Preview handler copies frame buffer to heap before async send
+- Ensures buffer isn't freed while still being transmitted
+- Original implementation had race condition where `esp_camera_fb_return()` was called before async response finished reading
+
 ## Web Configuration API
 
 The web server provides these endpoints:
 
 - `GET /` - Main configuration interface (HTML)
 - `GET /config` - Current configuration as JSON
-- `POST /config` - Save new configuration (JSON body)
-- `GET /status` - Device status (IP, MAC, heap, timeout)
-- `GET /preview` - Capture and return JPEG image
+- `POST /config` - Save new configuration (JSON body, requires auth if password set)
+- `GET /status` - Device status (IP, MAC, local time, heap, timeout)
+- `GET /preview` - Capture and return JPEG image (for preview only)
+- `GET /capture` - Capture image and upload to server (returns JSON success/failure)
+- `GET /auth-check` - Check authentication status (returns auth requirement and status)
 - `POST /reset` - Factory reset and reboot
+
+### Web Authentication
+
+Configuration changes can be protected with HTTP Basic Authentication:
+
+1. Set a username and password in the "Web Authentication" section
+2. Leave password empty to disable authentication (default)
+3. When enabled, only the `POST /config` endpoint requires authentication
+4. Browser will prompt for credentials when saving configuration
+5. Save button is hidden in UI if authentication is required but user is not authenticated
 
 ## Troubleshooting
 
 - **Can't Access Web UI**: Power cycle device to re-enter CONFIG mode, check IP in serial output
+- **Can't Save Configuration**: If web authentication is enabled, browser will prompt for credentials
 - **WiFi Connection Issues**: Update credentials via web UI or check `wifi_credentials.h`
 - **Camera Init Failed**: Verify XIAO ESP32S3 **Sense** variant (has camera), check PSRAM enabled
 - **Upload Failures**: Verify server URL, network connectivity, and authentication token via web UI
 - **Wrong Capture Times**: Check timezone settings in web UI, verify NTP sync in serial logs
+- **Corrupted/Sliced Images**: Fixed in current version with camera mutex protection
+- **Camera Busy Errors**: Normal when preview and scheduled capture overlap; retry in a few seconds
 - **High Power Consumption**: Ensure device enters deep sleep (check serial logs), disconnect USB cable
 - **Device Won't Sleep**: Wait for full 15-minute timeout, or check if next capture is <5 minutes away
 - **Repeated Failures**: Device will stay in CONFIG mode after 3 consecutive failed captures for troubleshooting
 - **Certificate Errors**: The code uses `setInsecure()` for testing; implement proper certificate validation for production
+- **Schedule Not Responding**: Device checks schedule every 10 seconds in CONFIG mode; ensure local time is correct in Device Status
+- **Forgot Web Password**: Edit via serial monitor or factory reset, then reconfigure
 
 ## Serial Monitor Output
 
@@ -235,10 +297,13 @@ The device provides detailed logging at 115200 baud over USB serial, including:
 - Camera initialization status
 - NTP time synchronization
 - Web server URL and timeout countdown
-- Scheduled capture events
+- Schedule checking in CONFIG mode (every 10 seconds)
+- Scheduled capture events (including captures during CONFIG mode)
+- Camera mutex lock/unlock operations
 - Upload success/failure with HTTP response codes
 - Deep sleep duration and next wake time
 - RTC data (boot count, failed captures, last NTP sync)
+- Authentication status when password protection is enabled
 
 ## Additional Documentation
 

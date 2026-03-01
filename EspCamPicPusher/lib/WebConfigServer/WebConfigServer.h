@@ -79,6 +79,7 @@ private:
     void handleCapture(AsyncWebServerRequest* request);
     void handlePreview(AsyncWebServerRequest* request);
     void handleStatus(AsyncWebServerRequest* request);
+    void handleAuthCheck(AsyncWebServerRequest* request);
     void handleReset(AsyncWebServerRequest* request);
     void handleNotFound(AsyncWebServerRequest* request);
     
@@ -87,6 +88,7 @@ private:
     
     // Utility
     void logRequest(AsyncWebServerRequest* request);
+    bool checkAuthentication(AsyncWebServerRequest* request);
 };
 
 #endif // WEB_CONFIG_SERVER_H

@@ -3,6 +3,7 @@
 #include "ScheduleManager.h"
 #include <WiFi.h>
 #include <ArduinoJson.h>
+#include <base64.h>
 
 WebConfigServer::WebConfigServer(ConfigManager* configMgr, int port) {
     configManager = configMgr;
@@ -105,6 +106,13 @@ void WebConfigServer::setupRoutes() {
         this->handleStatus(request);
     });
     
+    // Authentication check
+    server->on("/auth-check", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        this->logRequest(request);
+        this->resetActivityTimer();
+        this->handleAuthCheck(request);
+    });
+    
     // Reset to factory defaults
     server->on("/reset", HTTP_POST, [this](AsyncWebServerRequest* request) {
         this->logRequest(request);
@@ -129,6 +137,12 @@ void WebConfigServer::handleGetConfig(AsyncWebServerRequest* request) {
 }
 
 void WebConfigServer::handlePostConfig(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
+    // Check authentication if password is set
+    if (!checkAuthentication(request)) {
+        request->send(401, "application/json", "{\"success\":false,\"message\":\"Authentication required\"}");
+        return;
+    }
+    
     // Parse JSON from request body
     String body = "";
     for (size_t i = 0; i < len; i++) {
@@ -252,6 +266,22 @@ void WebConfigServer::handleStatus(AsyncWebServerRequest* request) {
     serializeJson(doc, output);
     
     request->send(200, "application/json", output);
+}
+
+void WebConfigServer::handleAuthCheck(AsyncWebServerRequest* request) {
+    // Check if authentication is required
+    if (strlen(configManager->getWebPassword()) == 0) {
+        // No password set, no auth required
+        request->send(200, "application/json", "{\"authenticated\":true,\"required\":false}");
+        return;
+    }
+    
+    // Check authentication
+    if (checkAuthentication(request)) {
+        request->send(200, "application/json", "{\"authenticated\":true,\"required\":true}");
+    } else {
+        request->send(401, "application/json", "{\"authenticated\":false,\"required\":true}");
+    }
 }
 
 void WebConfigServer::handleReset(AsyncWebServerRequest* request) {
@@ -520,6 +550,20 @@ String WebConfigServer::generateHtmlPage() {
                 </div>
             </div>
 
+            <!-- Web Authentication -->
+            <div class="section">
+                <h2>🔒 Web Authentication</h2>
+                <p style="font-size: 12px; color: #666; margin-bottom: 10px;">Leave password empty to disable authentication</p>
+                <div class="form-group">
+                    <label>Username:</label>
+                    <input type="text" id="webUsername" placeholder="admin">
+                </div>
+                <div class="form-group">
+                    <label>Password:</label>
+                    <input type="password" id="webPassword" placeholder="Leave blank to keep current or disable auth">
+                </div>
+            </div>
+
             <!-- Manual Capture -->
             <div class="section">
                 <h2>📸 Manual Capture</h2>
@@ -530,15 +574,20 @@ String WebConfigServer::generateHtmlPage() {
 
             <!-- Action Buttons -->
             <div class="button-group">
-                <button class="btn btn-primary" onclick="saveConfig()">💾 Save Configuration</button>
+                <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()">💾 Save Configuration</button>
                 <button class="btn btn-secondary" onclick="loadConfig()">🔄 Reload</button>
                 <button class="btn btn-danger" onclick="resetConfig()">⚠️ Factory Reset</button>
+            </div>
+            <div id="authWarning" class="message error" style="display:none; margin-top: 10px;">
+                Authentication required. Please log in to save configuration.
             </div>
         </div>
     </div>
 
     <script>
         let schedule = [];
+        let isAuthenticated = false;
+        let authRequired = false;
 
         function showMessage(text, isError = false) {
             const msg = document.getElementById('message');
@@ -580,12 +629,52 @@ String WebConfigServer::generateHtmlPage() {
                     document.getElementById('webTimeoutMin').value = config.webTimeoutMin || 15;
                     document.getElementById('sleepMarginSec').value = config.sleepMarginSec || 60;
                     
+                    // Load web authentication
+                    document.getElementById('webUsername').value = config.webUsername || '';
+                    document.getElementById('webPassword').placeholder = 'Current: ' + (config.webPassword === '********' ? 'Set' : 'Not set');
+                    
+                    // Check if auth is required
+                    authRequired = config.webPassword === '********';
+                    checkAuthStatus();
+                    
                     schedule = config.schedule || [];
                     renderSchedule();
                     
                     showMessage('Configuration loaded');
                 })
                 .catch(err => showMessage('Failed to load config: ' + err, true));
+        }
+        
+        function checkAuthStatus() {
+            // Check if we can access the config endpoint (which doesn't require auth for GET)
+            // If auth is required, hide the save button and show warning
+            const saveBtn = document.getElementById('saveBtn');
+            const authWarning = document.getElementById('authWarning');
+            
+            if (authRequired) {
+                // Try a test request to see if we're authenticated
+                fetch('/auth-check')
+                    .then(r => {
+                        isAuthenticated = r.ok;
+                        if (!isAuthenticated) {
+                            saveBtn.style.display = 'none';
+                            authWarning.style.display = 'block';
+                        } else {
+                            saveBtn.style.display = '';
+                            authWarning.style.display = 'none';
+                        }
+                    })
+                    .catch(() => {
+                        isAuthenticated = false;
+                        saveBtn.style.display = 'none';
+                        authWarning.style.display = 'block';
+                    });
+            } else {
+                // No auth required
+                isAuthenticated = true;
+                saveBtn.style.display = '';
+                authWarning.style.display = 'none';
+            }
         }
 
         function saveConfig() {
@@ -598,7 +687,9 @@ String WebConfigServer::generateHtmlPage() {
                 daylightOffsetSec: parseInt(document.getElementById('daylightOffsetSec').value),
                 schedule: schedule,
                 webTimeoutMin: parseInt(document.getElementById('webTimeoutMin').value),
-                sleepMarginSec: parseInt(document.getElementById('sleepMarginSec').value)
+                sleepMarginSec: parseInt(document.getElementById('sleepMarginSec').value),
+                webUsername: document.getElementById('webUsername').value,
+                webPassword: document.getElementById('webPassword').value
             };
 
             fetch('/config', {
@@ -607,6 +698,9 @@ String WebConfigServer::generateHtmlPage() {
                 body: JSON.stringify(config)
             })
             .then(r => {
+                if (r.status === 401) {
+                    throw new Error('Authentication required. Please refresh and log in.');
+                }
                 if (!r.ok) {
                     throw new Error('HTTP ' + r.status);
                 }
@@ -618,6 +712,10 @@ String WebConfigServer::generateHtmlPage() {
                     // Clear password fields after successful save
                     document.getElementById('wifiPassword').value = '';
                     document.getElementById('authToken').value = '';
+                    document.getElementById('webPassword').value = '';
+                    
+                    // Reload config to update auth status
+                    setTimeout(() => loadConfig(), 1000);
                 } else {
                     showMessage('❌ Failed: ' + data.message, true);
                 }
@@ -752,4 +850,33 @@ void WebConfigServer::setCameraReady(bool initialized) {
 
 void WebConfigServer::setCaptureCallback(CaptureCallback callback) {
     captureCallback = callback;
+}
+
+bool WebConfigServer::checkAuthentication(AsyncWebServerRequest* request) {
+    // If no password is set, allow access
+    const char* configPassword = configManager->getWebPassword();
+    if (strlen(configPassword) == 0) {
+        return true;
+    }
+    
+    // Check for Authorization header
+    if (!request->hasHeader("Authorization")) {
+        return false;
+    }
+    
+    String authHeader = request->header("Authorization");
+    
+    // Check if it's Basic auth
+    if (!authHeader.startsWith("Basic ")) {
+        return false;
+    }
+    
+    // Extract base64 encoded credentials
+    String encoded = authHeader.substring(6);
+    
+    // Build expected credentials and encode
+    String expectedCreds = String(configManager->getWebUsername()) + ":" + String(configPassword);
+    String expectedEncoded = base64::encode(expectedCreds);
+    
+    return (encoded == expectedEncoded);
 }

@@ -10,6 +10,7 @@
 #define MAX_PASSWORD_LENGTH 64
 #define MAX_URL_LENGTH 256
 #define MAX_TOKEN_LENGTH 128
+#define MAX_USERNAME_LENGTH 32
 
 // Configuration structure
 struct AppConfig {
@@ -35,6 +36,10 @@ struct AppConfig {
     // Power management
     int webTimeoutMin;
     int sleepMarginSec;
+    
+    // Web authentication
+    char webUsername[MAX_USERNAME_LENGTH];
+    char webPassword[MAX_PASSWORD_LENGTH];
     
     // Validation flag
     bool isValid;
@@ -72,6 +77,8 @@ public:
     int getCaptureMinute(int index) { return config.captureTimes[index].minute; }
     int getWebTimeoutMin() { return config.webTimeoutMin; }
     int getSleepMarginSec() { return config.sleepMarginSec; }
+    const char* getWebUsername() { return config.webUsername; }
+    const char* getWebPassword() { return config.webPassword; }
     
     // Get entire config structure
     AppConfig& getConfig() { return config; }
@@ -85,6 +92,8 @@ public:
     void setDaylightOffsetSec(int offset) { config.daylightOffsetSec = offset; }
     void setWebTimeoutMin(int timeout);
     void setSleepMarginSec(int margin) { config.sleepMarginSec = margin; }
+    void setWebUsername(const char* username);
+    void setWebPassword(const char* password);
     
     // Schedule management
     void clearSchedule();

@@ -74,6 +74,10 @@ void ConfigManager::loadDefaults() {
     config.webTimeoutMin = DEFAULT_WEB_TIMEOUT_MIN;
     config.sleepMarginSec = DEFAULT_SLEEP_MARGIN_SEC;
     
+    // Web authentication defaults (no auth by default)
+    config.webUsername[0] = '\0';
+    config.webPassword[0] = '\0';
+    
     config.isValid = true;
 }
 
@@ -115,6 +119,10 @@ bool ConfigManager::load() {
     config.webTimeoutMin = prefs.getInt("webTimeout", DEFAULT_WEB_TIMEOUT_MIN);
     config.sleepMarginSec = prefs.getInt("sleepMargin", DEFAULT_SLEEP_MARGIN_SEC);
     
+    // Load web authentication
+    prefs.getString("webUsername", config.webUsername, MAX_USERNAME_LENGTH);
+    prefs.getString("webPassword", config.webPassword, MAX_PASSWORD_LENGTH);
+    
     // Validate loaded configuration
     if (!validateConfig()) {
         Serial.println("Loaded config validation failed");
@@ -154,6 +162,10 @@ bool ConfigManager::save() {
     
     prefs.putInt("webTimeout", config.webTimeoutMin);
     prefs.putInt("sleepMargin", config.sleepMarginSec);
+    
+    // Save web authentication
+    prefs.putString("webUsername", config.webUsername);
+    prefs.putString("webPassword", config.webPassword);
     
     Serial.println("Configuration saved to NVS");
     return true;
@@ -255,6 +267,16 @@ void ConfigManager::setWebTimeoutMin(int timeout) {
     config.webTimeoutMin = timeout;
 }
 
+void ConfigManager::setWebUsername(const char* username) {
+    strncpy(config.webUsername, username, MAX_USERNAME_LENGTH - 1);
+    config.webUsername[MAX_USERNAME_LENGTH - 1] = '\0';
+}
+
+void ConfigManager::setWebPassword(const char* password) {
+    strncpy(config.webPassword, password, MAX_PASSWORD_LENGTH - 1);
+    config.webPassword[MAX_PASSWORD_LENGTH - 1] = '\0';
+}
+
 void ConfigManager::clearSchedule() {
     config.numCaptureTimes = 0;
 }
@@ -353,6 +375,18 @@ bool ConfigManager::loadFromJson(const char* jsonStr) {
         config.sleepMarginSec = doc["sleepMarginSec"];
     }
     
+    // Load web authentication
+    if (doc.containsKey("webUsername")) {
+        setWebUsername(doc["webUsername"]);
+    }
+    if (doc.containsKey("webPassword")) {
+        const char* pwd = doc["webPassword"];
+        // Only update if not empty and not the masked placeholder
+        if (pwd && strlen(pwd) > 0 && strcmp(pwd, "********") != 0) {
+            setWebPassword(pwd);
+        }
+    }
+    
     return validateConfig();
 }
 
@@ -379,6 +413,10 @@ String ConfigManager::toJson() {
     
     doc["webTimeoutMin"] = config.webTimeoutMin;
     doc["sleepMarginSec"] = config.sleepMarginSec;
+    
+    doc["webUsername"] = config.webUsername;
+    // Don't include password in JSON export for security
+    doc["webPassword"] = strlen(config.webPassword) > 0 ? "********" : "";
     
     String output;
     serializeJson(doc, output);
