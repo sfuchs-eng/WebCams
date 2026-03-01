@@ -35,12 +35,37 @@ Wifi stability improvements when using NetworkManager:
 
 ### 2. Configure Credentials
 
-Edit `capture-upload-image.sh` with your settings:
+**Option A: Using Environment Variables (Recommended)**
+
+Copy and configure the environment template:
 
 ```bash
-CAM="CoolCam"                                    # Your camera ID
-AUTH_TOKEN='your-secret-token-here'              # Server authentication token
-POSTHANDLER='https://yourdomain.com/cams/upload.php'  # Server upload URL
+cp env.template env
+nano env
+```
+
+Edit the variables in `env`:
+
+```bash
+CAM_NAME="CoolCam"                                    # Your camera ID
+CAM_AUTH_TOKEN="your-secret-token-here"              # Server authentication token
+CAM_POSTHANDLER="https://yourdomain.com/cams/upload.php"  # Server upload URL
+```
+
+Then run the script with environment variables loaded:
+
+```bash
+source env && ./capture-upload-image.sh
+```
+
+**Option B: Direct Script Editing**
+
+Edit `capture-upload-image.sh` and modify the default values:
+
+```bash
+CAM="${CAM_NAME:-CoolCam}"                           # Your camera ID
+AUTH_TOKEN="${CAM_AUTH_TOKEN:-your-secret-token-here}"   # Server authentication token
+POSTHANDLER="${CAM_POSTHANDLER:-https://yourdomain.com/cams/upload.php}"  # Server upload URL
 ```
 
 ### 3. Set Up Cron Job
@@ -51,11 +76,21 @@ Add scheduled captures:
 crontab -e
 ```
 
-Add line for captures every 1h from 07:00 to 17:00:
+**Option A: Using environment variables (recommended):**
 
 ```cron
-0 7-17 * * * /home/pi/RasPiCam/capture-upload-image.sh >> /var/log/webcam-upload.log 2>&1
+# Load environment and capture every hour from 07:00 to 17:00
+0 7-17 * * * cd /home/pi/RasPiCam && source env && ./capture-upload-image.sh
 ```
+
+**Option B: Using script defaults:**
+
+```cron
+# Capture every hour from 07:00 to 17:00
+0 7-17 * * * /home/pi/RasPiCam/capture-upload-image.sh
+```
+
+Note: The script now includes built-in log rotation (daily rotation, keeps 30 days of logs in `/var/log/webcam/`).
 
 ## WiFi Stability Features
 
@@ -79,8 +114,20 @@ Add line for captures every 1h from 07:00 to 17:00:
 ## Manual Operations
 
 ### Test Upload
+
+**With environment variables:**
+```bash
+source env && ./capture-upload-image.sh
+```
+
+**With script defaults:**
 ```bash
 ./capture-upload-image.sh
+```
+
+### View Capture Logs
+```bash
+sudo tail -f /var/log/webcam/capture.log
 ```
 
 ### Check WiFi Watchdog Status
@@ -102,6 +149,8 @@ sudo tail -f /var/log/wifi-watchdog.log
 ## Configuration
 
 ### capture-upload-image.sh Settings
+
+**Script Configuration:**
 ```bash
 MAX_RETRIES=3          # Number of upload attempts
 RETRY_DELAY=5          # Seconds between retries
@@ -109,6 +158,14 @@ CAPTURE_TIMEOUT=10     # Camera capture timeout (seconds)
 CONNECTION_TIMEOUT=10  # curl connection timeout (seconds)
 MAX_TIME=30           # curl maximum operation time (seconds)
 ```
+
+**Logging:**
+```bash
+LOG_DIR="/var/log/webcam"      # Log directory
+LOG_FILE="${LOG_DIR}/capture.log"  # Current log file
+```
+
+The script automatically rotates logs daily and keeps 30 days of history. Rotated logs are named `capture.log.YYYY-MM-DD`.
 
 ### wifi-watchdog.sh Settings
 ```bash
@@ -127,9 +184,9 @@ FAIL_THRESHOLD=3       # Failed pings before restart
 
 ### Upload Failures
 1. Check network: `ping 8.8.8.8`
-2. Verify server URL and token in `capture-upload-image.sh`
-3. Test manually: `./capture-upload-image.sh`
-4. Check cron logs: `tail -f /var/log/webcam-upload.log`
+2. Verify server URL and token in `env` file (or script defaults)
+3. Test manually: `source env && ./capture-upload-image.sh` (if using environment variables)
+4. Check logs: `sudo tail -f /var/log/webcam/capture.log`
 
 ### Camera Not Working
 1. Enable camera: `sudo raspi-config` → Interface Options → Camera
@@ -155,11 +212,12 @@ See main [WebCams README](../README.md) for complete system architecture.
 
 ## Files
 
-- `capture-upload-image.sh` - Main capture and upload script with retry logic
+- `capture-upload-image.sh` - Main capture and upload script with retry logic and built-in log rotation
+- `env.template` - Environment variable template for configuration (copy to `/etc/environment` and customize)
 - `wifi-watchdog.sh` - Connection monitoring daemon
 - `setup-wifi-stability.sh` - WiFi optimization setup
 - `install-stability-tools.sh` - Complete installation script
-- `systemd/wifi-watchdog.service` - Systemd service for watchdog
+- `systemd/wifi-watchdog.service` - Systemd service for watchdog (in systemd/ subdirectory)
 - `test-upload.sh` - Test script for upload functionality
 
 ## License

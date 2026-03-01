@@ -66,8 +66,8 @@ capture_and_upload() {
             continue
         fi
         
-        # Capture and upload
-        if libcamera-jpeg -n --immediate=1 --autofocus-on-capture=1 --metering=average \
+        # Capture and upload (removed --immediate=1 to allow autofocus and metering to work properly, but added --timeout to prevent hanging)
+        if libcamera-jpeg -n --autofocus-on-capture=1 --metering=average \
                           --timeout ${CAPTURE_TIMEOUT}000 -o - 2>/dev/null | \
            curl -X POST \
                 -H "X-Auth-Token: ${AUTH_TOKEN}" \
