@@ -32,13 +32,17 @@ OperatingMode currentMode = MODE_CONFIG;
 
 unsigned long lastNtpUpdate = 0;
 bool cameraInitialized = false;
+bool isApMode = false;  // Track if in AP+STA mode
 
 // ============================================================================
 // Function Declarations
 // ============================================================================
 
 void setupSerial();
-void setupWiFi();
+bool setupWiFiSTA();
+void setupWiFiAPSTA();
+String generateApSsid();
+bool isWiFiConnected();
 void setupCamera();
 void setupTime();
 void updateTime();
@@ -85,20 +89,46 @@ void setup() {
         Serial.println("=== Entering CONFIGURATION MODE ===");
         currentMode = MODE_CONFIG;
         
-        setupWiFi();
+        // Try to connect to WiFi
+        bool wifiConnected = setupWiFiSTA();
+        
+        if (!wifiConnected) {
+            // WiFi failed, start AP+STA mode
+            Serial.println("WiFi connection failed, starting AP+STA mode");
+            setupWiFiAPSTA();
+            isApMode = true;
+        } else {
+            isApMode = false;
+        }
+        
         setupCamera();
-        setupTime();
+        
+        // Only setup time if WiFi is connected (NTP requires internet)
+        if (wifiConnected || isWiFiConnected()) {
+            setupTime();
+        } else {
+            Serial.println("Skipping NTP setup (no WiFi connection)");
+        }
         
         // Start web server
         webServer = new WebConfigServer(&configManager);
         webServer->setCameraReady(cameraInitialized);
         webServer->setCaptureCallback(captureAndPostImage);
+        webServer->setApMode(isApMode);
         if (!webServer->begin()) {
             Serial.println("ERROR: Failed to start web server");
         }
         
         Serial.println("\n=== EspCamPicPusher Ready - Config Mode ===");
-        Serial.printf("Configuration URL: http://%s/\n", WiFi.localIP().toString().c_str());
+        if (isApMode) {
+            Serial.printf("AP Mode: Connect to %s\n", generateApSsid().c_str());
+            Serial.println("Configuration URL: http://192.168.4.1/");
+            if (isWiFiConnected()) {
+                Serial.printf("Also available at: http://%s/\n", WiFi.localIP().toString().c_str());
+            }
+        } else {
+            Serial.printf("Configuration URL: http://%s/\n", WiFi.localIP().toString().c_str());
+        }
         Serial.printf("Web timeout: %d minutes\n", configManager.getWebTimeoutMin());
         Serial.println("===========================================\n");
         
@@ -107,7 +137,35 @@ void setup() {
         Serial.println("=== Entering CAPTURE MODE ===");
         currentMode = MODE_CAPTURE;
         
-        setupWiFi();
+        // Get WiFi retry count
+        uint32_t retryCount = sleepManager.getWifiRetryCount();
+        Serial.printf("WiFi retry attempt: %u/5\n", retryCount);
+        
+        // Try to connect to WiFi
+        bool wifiConnected = setupWiFiSTA();
+        
+        if (!wifiConnected) {
+            // WiFi failed
+            sleepManager.incrementFailedCaptures();
+            
+            if (retryCount < 5) {
+                // Retry: increment counter and sleep for 5 minutes
+                sleepManager.incrementWifiRetryCount();
+                Serial.printf("\nWiFi retry %u/5 failed, sleeping for 5 minutes...\n", retryCount + 1);
+                sleepManager.enterDeepSleep(300);  // 5 minutes = 300 seconds
+                // Code never reaches here
+            } else {
+                // Max retries reached, skip this capture and sleep until next scheduled time
+                Serial.println("\nWiFi unavailable after 5 retries, sleeping until next scheduled capture");
+                sleepManager.resetWifiRetryCount();
+                enterSleepMode();
+                // Code never reaches here
+            }
+        }
+        
+        // WiFi connected successfully - reset retry counter
+        sleepManager.resetWifiRetryCount();
+        
         setupCamera();
         
         // Check if NTP sync needed (>24 hours since last)
@@ -125,9 +183,32 @@ void setup() {
         // Unknown wake - enter config mode to be safe
         Serial.println("=== Unknown wake reason - entering CONFIG MODE ===");
         currentMode = MODE_CONFIG;
-        setupWiFi();
+        
+        bool wifiConnected = setupWiFiSTA();
+        if (!wifiConnected) {
+            Serial.println("WiFi connection failed, starting AP+STA mode");
+            setupWiFiAPSTA();
+            isApMode = true;
+        } else {
+            isApMode = false;
+        }
+        
         setupCamera();
-        setupTime();
+        
+        if (wifiConnected || isWiFiConnected()) {
+            setupTime();
+        } else {
+            Serial.println("Skipping NTP setup (no WiFi connection)");
+        }
+        
+        // Start web server
+        webServer = new WebConfigServer(&configManager);
+        webServer->setCameraReady(cameraInitialized);
+        webServer->setCaptureCallback(captureAndPostImage);
+        webServer->setApMode(isApMode);
+        if (!webServer->begin()) {
+            Serial.println("ERROR: Failed to start web server");
+        }
     }
 }
 
@@ -165,11 +246,57 @@ void setupSerial() {
 }
 
 // ============================================================================
-// WiFi Setup
+// WiFi Setup Functions
 // ============================================================================
 
-void setupWiFi() {
-    Serial.println("\n--- WiFi Setup ---");
+String generateApSsid() {
+    // Get last 4 characters of MAC address for unique SSID
+    String mac = WiFi.macAddress();
+    mac.replace(":", "");
+    String suffix = mac.substring(mac.length() - 4);
+    suffix.toUpperCase();
+    return "ESP32-CAM-" + suffix;
+}
+
+bool isWiFiConnected() {
+    return WiFi.status() == WL_CONNECTED;
+}
+
+void setupWiFiAPSTA() {
+    Serial.println("\n--- WiFi AP+STA Setup ---");
+    
+    // Get configured credentials
+    const char* ssid = configManager.getWifiSsid();
+    const char* password = configManager.getWifiPassword();
+    
+    // Generate AP SSID
+    String apSsid = generateApSsid();
+    
+    // Start AP+STA mode
+    WiFi.mode(WIFI_AP_STA);
+    
+    // Configure and start Access Point (no password)
+    bool apStarted = WiFi.softAP(apSsid.c_str());
+    if (apStarted) {
+        Serial.println("Access Point started");
+        Serial.printf("AP SSID: %s\n", apSsid.c_str());
+        Serial.printf("AP IP: %s\n", WiFi.softAPIP().toString().c_str());
+    } else {
+        Serial.println("ERROR: Failed to start Access Point");
+    }
+    
+    // Attempt to connect to configured WiFi
+    Serial.printf("Attempting STA connection to: %s\n", ssid);
+    WiFi.begin(ssid, password);
+    
+    Serial.println("\n=== AP+STA Mode Active ===");
+    Serial.printf("Connect to: %s\n", apSsid.c_str());
+    Serial.printf("Configuration URL: http://192.168.4.1\n");
+    Serial.println("===========================\n");
+}
+
+bool setupWiFiSTA() {
+    Serial.println("\n--- WiFi STA Setup ---");
     
     const char* ssid = configManager.getWifiSsid();
     const char* password = configManager.getWifiPassword();
@@ -190,14 +317,10 @@ void setupWiFi() {
         Serial.println("\nWiFi connected!");
         Serial.printf("IP address: %s\n", WiFi.localIP().toString().c_str());
         Serial.printf("Signal strength: %d dBm\n", WiFi.RSSI());
+        return true;
     } else {
         Serial.println("\nWiFi connection failed!");
-        Serial.println("Please check your credentials via web interface");
-        
-        // In capture mode, count as failed attempt
-        if (currentMode == MODE_CAPTURE) {
-            sleepManager.incrementFailedCaptures();
-        }
+        return false;
     }
 }
 
@@ -331,12 +454,34 @@ void runConfigMode() {
     static unsigned long lastCheck = 0;
     static unsigned long lastCaptureCheck = 0;
     static int lastCaptureMinute = -1; // Track last capture to prevent duplicates
+    static unsigned long lastApCheck = 0;
+    static bool staWasConnected = false;
     
     // Check every second
     if (millis() - lastCheck < 1000) {
         return;
     }
     lastCheck = millis();
+    
+    // Check AP+STA status every 10 seconds
+    if (isApMode && (millis() - lastApCheck >= 10000)) {
+        lastApCheck = millis();
+        
+        bool staConnected = isWiFiConnected();
+        if (staConnected && !staWasConnected) {
+            // STA just connected
+            Serial.println("\\n=== STA Connection Established ===");
+            Serial.printf("IP address: %s\\n", WiFi.localIP().toString().c_str());
+            Serial.printf("Signal strength: %d dBm\\n", WiFi.RSSI());
+            Serial.printf("Also accessible at: http://%s/\\n", WiFi.localIP().toString().c_str());
+            Serial.println("==============================\\n");
+            staWasConnected = true;
+        } else if (!staConnected && staWasConnected) {
+            // STA disconnected
+            Serial.println("\\n=== STA Connection Lost ===");
+            staWasConnected = false;
+        }
+    }
     
     // Check if it's time to capture (even while in config mode)
     // Check every 10 seconds to be responsive to schedule changes
@@ -384,6 +529,14 @@ void runConfigMode() {
     // Check if timeout expired
     if (webServer && webServer->isTimeoutExpired()) {
         Serial.println("\n=== Web server timeout expired ===");
+        
+        // If in AP mode, restart to retry
+        if (isApMode) {
+            Serial.println("AP mode timeout - WiFi not configured, restarting...");
+            delay(2000);
+            ESP.restart();
+            return;
+        }
         
         // Check if we should enter sleep mode or wait mode
         if (shouldEnterSleepMode()) {

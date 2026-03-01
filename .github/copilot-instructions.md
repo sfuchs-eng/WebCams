@@ -74,6 +74,7 @@ CameraMutex::unlock();
 - PHP: Modular `lib/` utilities (snake_case functions)
 - C++: Library classes in `lib/{ComponentName}/` (PascalCase classes, camelCase methods)
 - Config: PHP uses JSON, ESP32 uses NVS with compiled defaults
+- Specs and reports per project built with AI in `../<project>/AI/Specs/` and `../<project>/AI/Reports/` (markdown format)
 
 **Path Sanitization**: Device IDs converted to filesystem-safe names (MAC colons→hyphens, whitelist `[a-zA-Z0-9_-]`, 3-64 chars). See [storage.php](WebCamPics/lib/storage.php#L14-L49).
 

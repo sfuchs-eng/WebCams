@@ -60,6 +60,12 @@ public:
      */
     void setCaptureCallback(CaptureCallback callback);
     
+    /**
+     * Set AP mode status
+     * @param apMode True if in AP+STA mode
+     */
+    void setApMode(bool apMode);
+    
 private:
     AsyncWebServer* server;
     ConfigManager* configManager;
@@ -68,6 +74,7 @@ private:
     unsigned long timeoutMillis;
     bool cameraReady;
     CaptureCallback captureCallback;
+    bool isApMode;
     
     // Setup HTTP endpoints
     void setupRoutes();
@@ -76,6 +83,7 @@ private:
     void handleRoot(AsyncWebServerRequest* request);
     void handleGetConfig(AsyncWebServerRequest* request);
     void handlePostConfig(AsyncWebServerRequest* request, uint8_t* data, size_t len);
+    void handleTestConfig(AsyncWebServerRequest* request, uint8_t* data, size_t len);
     void handleCapture(AsyncWebServerRequest* request);
     void handlePreview(AsyncWebServerRequest* request);
     void handleStatus(AsyncWebServerRequest* request);

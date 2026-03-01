@@ -13,6 +13,7 @@ WebConfigServer::WebConfigServer(ConfigManager* configMgr, int port) {
     captureCallback = nullptr;
     timeoutMillis = 0;
     cameraReady = false;
+    isApMode = false;
 }
 
 WebConfigServer::~WebConfigServer() {
@@ -85,6 +86,19 @@ void WebConfigServer::setupRoutes() {
         }
     );
     
+    // Test WiFi configuration (JSON POST)
+    server->on("/config/test", HTTP_POST, 
+        [this](AsyncWebServerRequest* request) {
+            // This gets called after body handler
+        },
+        nullptr,
+        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            this->logRequest(request);
+            this->resetActivityTimer();
+            this->handleTestConfig(request, data, len);
+        }
+    );
+    
     // Trigger image capture and upload
     server->on("/capture", HTTP_GET, [this](AsyncWebServerRequest* request) {
         this->logRequest(request);
@@ -154,7 +168,84 @@ void WebConfigServer::handlePostConfig(AsyncWebServerRequest* request, uint8_t* 
     Serial.println("Received config update:");
     Serial.println(body);
     
-    // Try to load configuration
+    // Parse JSON to check for WiFi credential changes
+    DynamicJsonDocument doc(2048);
+    DeserializationError error = deserializeJson(doc, body);
+    
+    bool wifiChanged = false;
+    String newSsid = "";
+    String newPassword = "";
+    
+    if (!error && doc.containsKey("wifiSsid")) {
+        newSsid = doc["wifiSsid"].as<String>();
+        // Check if WiFi SSID changed
+        if (newSsid != String(configManager->getWifiSsid())) {
+            wifiChanged = true;
+        }
+        
+        // Check password (only if not the placeholder)
+        if (doc.containsKey("wifiPassword")) {
+            newPassword = doc["wifiPassword"].as<String>();
+            if (newPassword != "********") {
+                wifiChanged = true;
+            }
+        }
+    }
+    
+    // If in AP mode and WiFi credentials changed, test them first
+    if (isApMode && wifiChanged) {
+        Serial.println("WiFi credentials changed, testing connection...");
+        
+        // Test the connection
+        WiFi.begin(newSsid.c_str(), newPassword == "********" ? configManager->getWifiPassword() : newPassword.c_str());
+        
+        int attempts = 0;
+        while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+            delay(500);
+            Serial.print(".");
+            attempts++;
+        }
+        Serial.println();
+        
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("WiFi test successful!");
+            Serial.printf("Connected to %s\n", newSsid.c_str());
+            Serial.printf("IP: %s\n", WiFi.localIP().toString().c_str());
+            
+            // Connection successful, save config and reboot
+            if (configManager->loadFromJson(body.c_str())) {
+                if (configManager->save()) {
+                    // Send success response with reboot flag
+                    request->send(200, "application/json", "{\"success\":true,\"message\":\"WiFi connected! Rebooting in 3 seconds...\",\"rebooting\":true}");
+                    
+                    // Reboot after a delay
+                    delay(3000);
+                    ESP.restart();
+                    return;
+                } else {
+                    request->send(500, "application/json", "{\"success\":false,\"message\":\"Failed to save configuration\"}");
+                    return;
+                }
+            } else {
+                request->send(400, "application/json", "{\"success\":false,\"message\":\"Invalid configuration\"}");
+                return;
+            }
+        } else {
+            // Connection failed
+            Serial.println("WiFi test failed!");
+            request->send(400, "application/json", "{\"success\":false,\"message\":\"WiFi connection test failed. Please check credentials.\"}");
+            
+            // Try to reconnect to original WiFi if in AP+STA mode
+            String originalSsid = String(configManager->getWifiSsid());
+            if (originalSsid.length() > 0) {
+                Serial.printf("Attempting to reconnect to original WiFi: %s\n", originalSsid.c_str());
+                WiFi.begin(originalSsid.c_str(), configManager->getWifiPassword());
+            }
+            return;
+        }
+    }
+    
+    // Normal config save (no WiFi change or not in AP mode)
     if (configManager->loadFromJson(body.c_str())) {
         // Save to NVS
         if (configManager->save()) {
@@ -164,6 +255,91 @@ void WebConfigServer::handlePostConfig(AsyncWebServerRequest* request, uint8_t* 
         }
     } else {
         request->send(400, "application/json", "{\"success\":false,\"message\":\"Invalid configuration\"}");
+    }
+}
+
+void WebConfigServer::handleTestConfig(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
+    // Check authentication if password is set
+    if (!checkAuthentication(request)) {
+        AsyncWebServerResponse* response = request->beginResponse(401, "application/json", "{\"success\":false,\"message\":\"Authentication required\"}");
+        response->addHeader("WWW-Authenticate", "Basic realm=\"EspCamPicPusher\"");
+        request->send(response);
+        return;
+    }
+    
+    // Parse JSON from request body
+    String body = "";
+    for (size_t i = 0; i < len; i++) {
+        body += (char)data[i];
+    }
+    
+    Serial.println("Testing WiFi configuration:");
+    Serial.println(body);
+    
+    // Parse JSON
+    DynamicJsonDocument doc(2048);
+    DeserializationError error = deserializeJson(doc, body);
+    
+    if (error) {
+        request->send(400, "application/json", "{\"success\":false,\"connected\":false,\"message\":\"Invalid JSON\"}");
+        return;
+    }
+    
+    // Extract WiFi credentials
+    if (!doc.containsKey("wifiSsid")) {
+        request->send(400, "application/json", "{\"success\":false,\"connected\":false,\"message\":\"WiFi SSID required\"}");
+        return;
+    }
+    
+    String ssid = doc["wifiSsid"].as<String>();
+    String password = "";
+    
+    if (doc.containsKey("wifiPassword")) {
+        password = doc["wifiPassword"].as<String>();
+        // If password is placeholder, use current password
+        if (password == "********") {
+            password = String(configManager->getWifiPassword());
+        }
+    }
+    
+    Serial.printf("Testing connection to: %s\n", ssid.c_str());
+    
+    // Test WiFi connection
+    WiFi.begin(ssid.c_str(), password.c_str());
+    
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+        delay(500);
+        Serial.print(".");
+        attempts++;
+    }
+    Serial.println();
+    
+    if (WiFi.status() == WL_CONNECTED) {
+        // Success!
+        Serial.println("Test connection successful!");
+        Serial.printf("IP: %s\n", WiFi.localIP().toString().c_str());
+        Serial.printf("RSSI: %d dBm\n", WiFi.RSSI());
+        
+        // Build JSON response with connection details
+        String response = "{\"success\":true,\"connected\":true,\"ip\":\"" + 
+                         WiFi.localIP().toString() + 
+                         "\",\"rssi\":" + String(WiFi.RSSI()) + 
+                         ",\"message\":\"Connected successfully!\"}";
+        
+        request->send(200, "application/json", response);
+    } else {
+        // Failed
+        Serial.println("Test connection failed");
+        
+        // Try to reconnect to original WiFi if in AP+STA mode
+        String originalSsid = String(configManager->getWifiSsid());
+        if (isApMode && originalSsid.length() > 0) {
+            Serial.printf("Reconnecting to original WiFi: %s\n", originalSsid.c_str());
+            WiFi.begin(originalSsid.c_str(), configManager->getWifiPassword());
+        }
+        
+        request->send(400, "application/json", "{\"success\":false,\"connected\":false,\"message\":\"Connection failed. Check SSID and password.\"}");
     }
 }
 
@@ -249,12 +425,29 @@ void WebConfigServer::handleStatus(AsyncWebServerRequest* request) {
     StaticJsonDocument<512> doc;
     
     doc["macAddress"] = WiFi.macAddress();
-    doc["ipAddress"] = WiFi.localIP().toString();
     doc["rssi"] = WiFi.RSSI();
     doc["uptime"] = millis() / 1000;
     doc["remainingTimeout"] = getRemainingSeconds();
     doc["freeHeap"] = ESP.getFreeHeap();
     doc["cameraReady"] = cameraReady;
+    
+    // AP mode information
+    doc["apMode"] = isApMode;
+    if (isApMode) {
+        doc["apSsid"] = WiFi.softAPSSID();
+        doc["apIp"] = WiFi.softAPIP().toString();
+    }
+    
+    // STA mode information
+    bool staConnected = (WiFi.status() == WL_CONNECTED);
+    doc["staConnected"] = staConnected;
+    if (staConnected) {
+        doc["staIp"] = WiFi.localIP().toString();
+        doc["staSsid"] = WiFi.SSID();
+    } else {
+        // Use IP as fallback for non-STA mode
+        doc["ipAddress"] = WiFi.localIP().toString();
+    }
     
     // Add current local time
     struct tm timeinfo;
@@ -499,6 +692,9 @@ String WebConfigServer::generateHtmlPage() {
             <!-- WiFi Configuration -->
             <div class="section">
                 <h2>📡 WiFi Configuration</h2>
+                <p style="font-size: 12px; color: #666; margin-bottom: 15px;">
+                    💡 Tip: If WiFi connection fails during boot, device will create ESP32-CAM-XXXX access point at 192.168.4.1
+                </p>
                 <div class="form-group">
                     <label>SSID:</label>
                     <input type="text" id="wifiSsid" placeholder="WiFi Network Name">
@@ -507,6 +703,8 @@ String WebConfigServer::generateHtmlPage() {
                     <label>Password:</label>
                     <input type="password" id="wifiPassword" placeholder="Leave blank to keep current">
                 </div>
+                <div id="wifiTestResult" class="message" style="display:none;"></div>
+                <button class="btn btn-secondary btn-small" onclick="testWiFiConfig()">🔍 Test WiFi Connection</button>
             </div>
 
             <!-- Server Configuration -->
@@ -601,6 +799,13 @@ String WebConfigServer::generateHtmlPage() {
             msg.style.display = 'block';
             setTimeout(() => { msg.style.display = 'none'; }, 5000);
         }
+        
+        function showWiFiTestResult(text, isError = false) {
+            const msg = document.getElementById('wifiTestResult');
+            msg.textContent = text;
+            msg.className = 'message ' + (isError ? 'error' : 'success');
+            msg.style.display = 'block';
+        }
 
         function updateCountdown() {
             fetch('/status')
@@ -613,10 +818,24 @@ String WebConfigServer::generateHtmlPage() {
                         `⏱️ ${minutes}:${seconds.toString().padStart(2, '0')}`;
                     
                     document.getElementById('localTime').textContent = data.localTime || '-';
-                    document.getElementById('ipAddress').textContent = data.ipAddress;
                     document.getElementById('macAddress').textContent = data.macAddress;
                     document.getElementById('rssi').textContent = data.rssi;
                     document.getElementById('freeHeap').textContent = data.freeHeap.toLocaleString();
+                    
+                    // Show AP mode status if active
+                    if (data.apMode) {
+                        let ipText = 'AP: ' + data.apIp;
+                        if (data.staConnected) {
+                            ipText += ' | STA: ' + data.staIp;
+                        } else {
+                            ipText += ' (AP Mode: No STA connection)';
+                        }
+                        document.getElementById('ipAddress').textContent = ipText;
+                    } else if (data.staConnected) {
+                        document.getElementById('ipAddress').textContent = data.staIp;
+                    } else {
+                        document.getElementById('ipAddress').textContent = data.ipAddress || '-';
+                    }
                 });
         }
 
@@ -709,6 +928,46 @@ String WebConfigServer::generateHtmlPage() {
                 });
         }
 
+        function testWiFiConfig() {
+            const ssid = document.getElementById('wifiSsid').value;
+            const password = document.getElementById('wifiPassword').value;
+            
+            if (!ssid) {
+                showWiFiTestResult('❌ Please enter WiFi SSID', true);
+                return;
+            }
+            
+            showWiFiTestResult('🔄 Testing connection to ' + ssid + '...', false);
+            
+            const testData = {
+                wifiSsid: ssid,
+                wifiPassword: password || '********'
+            };
+            
+            fetch('/config/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(testData)
+            })
+            .then(r => {
+                if (r.status === 401) {
+                    throw new Error('Authentication required');
+                }
+                return r.json();
+            })
+            .then(data => {
+                if (data.connected) {
+                    showWiFiTestResult('✅ Connected! IP: ' + data.ip + ' | Signal: ' + data.rssi + ' dBm', false);
+                } else {
+                    showWiFiTestResult('❌ Connection failed: ' + data.message, true);
+                }
+            })
+            .catch(err => {
+                showWiFiTestResult('❌ Test error: ' + err, true);
+            });
+        }
+
         function saveConfig() {
             const config = {
                 wifiSsid: document.getElementById('wifiSsid').value,
@@ -741,14 +1000,30 @@ String WebConfigServer::generateHtmlPage() {
             })
             .then(data => {
                 if (data.success) {
-                    showMessage('✓ Configuration saved successfully!');
-                    // Clear password fields after successful save
-                    document.getElementById('wifiPassword').value = '';
-                    document.getElementById('authToken').value = '';
-                    document.getElementById('webPassword').value = '';
-                    
-                    // Reload config to update auth status
-                    setTimeout(() => loadConfig(), 1000);
+                    // Check if device is rebooting
+                    if (data.rebooting) {
+                        showMessage('✓ WiFi connected! Device rebooting in 3 seconds...');
+                        // Show countdown modal
+                        let countdown = 30;
+                        const countdownInterval = setInterval(() => {
+                            countdown--;
+                            showMessage(`✓ Device rebooting... Reconnecting in ${countdown}s`);
+                            if (countdown <= 0) {
+                                clearInterval(countdownInterval);
+                                // Attempt to redirect to current URL (will work if on new WiFi)
+                                window.location.reload();
+                            }
+                        }, 1000);
+                    } else {
+                        showMessage('✓ Configuration saved successfully!');
+                        // Clear password fields after successful save
+                        document.getElementById('wifiPassword').value = '';
+                        document.getElementById('authToken').value = '';
+                        document.getElementById('webPassword').value = '';
+                        
+                        // Reload config to update auth status
+                        setTimeout(() => loadConfig(), 1000);
+                    }
                 } else {
                     showMessage('❌ Failed: ' + data.message, true);
                 }
@@ -883,6 +1158,10 @@ void WebConfigServer::setCameraReady(bool initialized) {
 
 void WebConfigServer::setCaptureCallback(CaptureCallback callback) {
     captureCallback = callback;
+}
+
+void WebConfigServer::setApMode(bool apMode) {
+    isApMode = apMode;
 }
 
 bool WebConfigServer::checkAuthentication(AsyncWebServerRequest* request) {

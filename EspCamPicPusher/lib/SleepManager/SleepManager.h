@@ -12,6 +12,7 @@ typedef struct {
     uint32_t bootCount;       // Number of boots
     time_t lastNtpSync;       // Last successful NTP sync
     uint32_t failedCaptures;  // Consecutive failed capture attempts
+    uint32_t wifiRetryCount;  // WiFi retry attempts during timer wake
 } rtc_data_t;
 
 enum WakeReason {
@@ -98,6 +99,28 @@ public:
      * @return String description of wake reason
      */
     String getWakeReasonString();
+    
+    /**
+     * Get WiFi retry count from RTC memory
+     * @return Number of WiFi retry attempts
+     */
+    uint32_t getWifiRetryCount();
+    
+    /**
+     * Set WiFi retry count in RTC memory
+     * @param count Number of retry attempts
+     */
+    void setWifiRetryCount(uint32_t count);
+    
+    /**
+     * Increment WiFi retry counter
+     */
+    void incrementWifiRetryCount();
+    
+    /**
+     * Reset WiFi retry counter
+     */
+    void resetWifiRetryCount();
     
 private:
     rtc_data_t rtcData;

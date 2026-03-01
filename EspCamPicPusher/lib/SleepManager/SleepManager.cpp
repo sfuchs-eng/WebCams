@@ -38,6 +38,7 @@ void SleepManager::begin() {
     
     Serial.printf("Boot count: %u\n", rtcData.bootCount);
     Serial.printf("Failed captures: %u\n", rtcData.failedCaptures);
+    Serial.printf("WiFi retries: %u\n", rtcData.wifiRetryCount);
     
     if (rtcData.lastNtpSync > 0) {
         Serial.printf("Last NTP sync: %lu\n", rtcData.lastNtpSync);
@@ -72,6 +73,7 @@ void SleepManager::initRtcData() {
     rtcData.bootCount = 0;
     rtcData.lastNtpSync = 0;
     rtcData.failedCaptures = 0;
+    rtcData.wifiRetryCount = 0;
 }
 
 WakeReason SleepManager::getWakeReason() {
@@ -138,6 +140,26 @@ void SleepManager::prepare() {
     
     // Small delay to ensure cleanup
     delay(200);
+}
+
+uint32_t SleepManager::getWifiRetryCount() {
+    return rtcData.wifiRetryCount;
+}
+
+void SleepManager::setWifiRetryCount(uint32_t count) {
+    rtcData.wifiRetryCount = count;
+    saveRtcData();
+}
+
+void SleepManager::incrementWifiRetryCount() {
+    rtcData.wifiRetryCount++;
+    saveRtcData();
+    Serial.printf("WiFi retry count: %u\n", rtcData.wifiRetryCount);
+}
+
+void SleepManager::resetWifiRetryCount() {
+    rtcData.wifiRetryCount = 0;
+    saveRtcData();
 }
 
 void SleepManager::enterDeepSleep(uint64_t seconds) {
