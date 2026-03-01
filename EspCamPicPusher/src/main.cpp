@@ -5,29 +5,33 @@
 #include <time.h>
 #include "esp_camera.h"
 #include "config.h"
-
-// Include WiFi credentials from separate file
-// Create include/wifi_credentials.h from include/wifi_credentials_template.h
-#if __has_include("wifi_credentials.h")
-    #include "wifi_credentials.h"
-#else
-    #error "Please create include/wifi_credentials.h from include/wifi_credentials_template.h"
-#endif
-
-// Include server authentication token from separate file
-// Create include/auth_token.h from include/auth_token_template.h with your server URL and authentication token
-#if __has_include("auth_token.h")
-    #include "auth_token.h"
-#else
-    #error "Please create include/auth_token.h from include/auth_token_template.h with your server URL and authentication token"
-#endif
+#include "ConfigManager.h"
+#include "ScheduleManager.h"
+#include "SleepManager.h"
+#include "WebConfigServer.h"
+#include "CameraMutex.h"
 
 // ============================================================================
 // Global Variables
 // ============================================================================
 
+// Manager instances
+ConfigManager configManager;
+ScheduleManager scheduleManager;
+SleepManager sleepManager;
+WebConfigServer* webServer = nullptr;
+
+// Operating mode
+enum OperatingMode {
+    MODE_CONFIG,    // Web server active for configuration
+    MODE_CAPTURE,   // Quick capture and return to sleep
+    MODE_WAIT       // Waiting for next capture (not sleeping)
+};
+
+OperatingMode currentMode = MODE_CONFIG;
+
 unsigned long lastNtpUpdate = 0;
-bool captureExecuted[NUM_CAPTURE_TIMES] = {false};
+bool cameraInitialized = false;
 
 // ============================================================================
 // Function Declarations
@@ -39,9 +43,15 @@ void setupCamera();
 void setupTime();
 void updateTime();
 bool captureAndPostImage();
-void checkScheduledCapture();
-String getFormattedTime();
 void blinkLED(int times, int delayMs);
+
+// New mode-specific functions
+void runConfigMode();
+void runCaptureMode();
+void runWaitMode();
+void enterSleepMode();
+void buildScheduleFromConfig();
+bool shouldEnterSleepMode();
 
 // ============================================================================
 // Setup Function
@@ -51,18 +61,73 @@ void setup() {
     setupSerial();
     blinkLED(3, 200); // Visual indication of startup
     
-    setupWiFi();
-    setupCamera();
-    setupTime();
+    // Initialize sleep manager
+    sleepManager.begin();
     
-    Serial.println("\n=== EspCamPicPusher Ready ===");
-    Serial.println("Configuration:");
-    Serial.printf("  Server URL: %s\n", SERVER_URL);
-    Serial.printf("  Capture times: %d per day\n", NUM_CAPTURE_TIMES);
-    for (int i = 0; i < NUM_CAPTURE_TIMES; i++) {
-        Serial.printf("    %02d:%02d\n", CAPTURE_TIMES[i].hour, CAPTURE_TIMES[i].minute);
+    // Initialize camera mutex for thread-safe access
+    CameraMutex::init();
+    
+    // Initialize configuration manager
+    if (!configManager.begin()) {
+        Serial.println("ERROR: Failed to initialize configuration");
+        blinkLED(10, 100);
+        delay(5000);
+        ESP.restart();
     }
-    Serial.println("=============================\n");
+    
+    // Determine operating mode based on wake reason
+    WakeReason wakeReason = sleepManager.getWakeReason();
+    
+    Serial.printf("\n=== Wake Reason: %s ===\n", sleepManager.getWakeReasonString().c_str());
+    
+    if (wakeReason == WAKE_POWER_ON) {
+        // Fresh boot - enter configuration mode
+        Serial.println("=== Entering CONFIGURATION MODE ===");
+        currentMode = MODE_CONFIG;
+        
+        setupWiFi();
+        setupCamera();
+        setupTime();
+        
+        // Start web server
+        webServer = new WebConfigServer(&configManager);
+        webServer->setCameraReady(cameraInitialized);
+        if (!webServer->begin()) {
+            Serial.println("ERROR: Failed to start web server");
+        }
+        
+        Serial.println("\n=== EspCamPicPusher Ready - Config Mode ===");
+        Serial.printf("Configuration URL: http://%s/\n", WiFi.localIP().toString().c_str());
+        Serial.printf("Web timeout: %d minutes\n", configManager.getWebTimeoutMin());
+        Serial.println("===========================================\n");
+        
+    } else if (wakeReason == WAKE_TIMER) {
+        // Timer wake - capture and return to sleep
+        Serial.println("=== Entering CAPTURE MODE ===");
+        currentMode = MODE_CAPTURE;
+        
+        setupWiFi();
+        setupCamera();
+        
+        // Check if NTP sync needed (>24 hours since last)
+        time_t lastSync = sleepManager.getLastNtpSync();
+        time_t now = time(nullptr);
+        if (lastSync == 0 || (now - lastSync) > 86400) {
+            Serial.println("NTP sync required...");
+            setupTime();
+            sleepManager.setLastNtpSync(time(nullptr));
+        } else {
+            Serial.println("Using RTC time (NTP sync not required)");
+        }
+        
+    } else {
+        // Unknown wake - enter config mode to be safe
+        Serial.println("=== Unknown wake reason - entering CONFIG MODE ===");
+        currentMode = MODE_CONFIG;
+        setupWiFi();
+        setupCamera();
+        setupTime();
+    }
 }
 
 // ============================================================================
@@ -70,17 +135,21 @@ void setup() {
 // ============================================================================
 
 void loop() {
-    // Update time periodically
-    if (millis() - lastNtpUpdate > NTP_UPDATE_INTERVAL) {
-        updateTime();
-        lastNtpUpdate = millis();
+    switch (currentMode) {
+        case MODE_CONFIG:
+            runConfigMode();
+            break;
+            
+        case MODE_CAPTURE:
+            runCaptureMode();
+            break;
+            
+        case MODE_WAIT:
+            runWaitMode();
+            break;
     }
     
-    // Check if it's time to capture and post
-    checkScheduledCapture();
-    
-    // Small delay to prevent tight loop
-    delay(1000);
+    delay(100); // Small delay to prevent tight loop
 }
 
 // ============================================================================
@@ -100,10 +169,14 @@ void setupSerial() {
 
 void setupWiFi() {
     Serial.println("\n--- WiFi Setup ---");
-    Serial.printf("Connecting to: %s\n", WIFI_SSID);
+    
+    const char* ssid = configManager.getWifiSsid();
+    const char* password = configManager.getWifiPassword();
+    
+    Serial.printf("Connecting to: %s\n", ssid);
     
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.begin(ssid, password);
     
     int attempts = 0;
     while (WiFi.status() != WL_CONNECTED && attempts < 30) {
@@ -118,9 +191,12 @@ void setupWiFi() {
         Serial.printf("Signal strength: %d dBm\n", WiFi.RSSI());
     } else {
         Serial.println("\nWiFi connection failed!");
-        Serial.println("Please check your credentials in wifi_credentials.h");
-        delay(5000);
-        ESP.restart();
+        Serial.println("Please check your credentials via web interface");
+        
+        // In capture mode, count as failed attempt
+        if (currentMode == MODE_CAPTURE) {
+            sleepManager.incrementFailedCaptures();
+        }
     }
 }
 
@@ -162,10 +238,16 @@ void setupCamera() {
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
         Serial.printf("Camera init failed with error 0x%x\n", err);
-        delay(5000);
-        ESP.restart();
+        cameraInitialized = false;
+        
+        // In capture mode, count as failed attempt
+        if (currentMode == MODE_CAPTURE) {
+            sleepManager.incrementFailedCaptures();
+        }
+        return;
     }
     
+    cameraInitialized = true;
     Serial.println("Camera initialized successfully");
     
     // Get sensor for additional settings
@@ -204,7 +286,10 @@ void setupTime() {
     Serial.println("\n--- Time Setup ---");
     Serial.printf("NTP Server: %s\n", NTP_SERVER);
     
-    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER, NTP_SERVER2);
+    long gmtOffset = configManager.getGmtOffsetSec();
+    int dstOffset = configManager.getDaylightOffsetSec();
+    
+    configTime(gmtOffset, dstOffset, NTP_SERVER, NTP_SERVER2);
     
     Serial.print("Waiting for NTP time sync");
     int attempts = 0;
@@ -217,7 +302,7 @@ void setupTime() {
     
     if (attempts < 20) {
         Serial.println("\nTime synchronized!");
-        Serial.println(getFormattedTime());
+        Serial.println(ScheduleManager::formatTime(&timeinfo));
         lastNtpUpdate = millis();
     } else {
         Serial.println("\nFailed to obtain time!");
@@ -226,57 +311,224 @@ void setupTime() {
 
 void updateTime() {
     Serial.println("Updating time from NTP...");
-    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER, NTP_SERVER2);
+    long gmtOffset = configManager.getGmtOffsetSec();
+    int dstOffset = configManager.getDaylightOffsetSec();
+    configTime(gmtOffset, dstOffset, NTP_SERVER, NTP_SERVER2);
     delay(1000);
-    Serial.println(getFormattedTime());
-}
-
-String getFormattedTime() {
-    struct tm timeinfo;
-    if (!getLocalTime(&timeinfo)) {
-        return "Failed to obtain time";
-    }
     
-    char buffer[64];
-    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
-    return String(buffer);
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+        Serial.println(ScheduleManager::formatTime(&timeinfo));
+    }
 }
 
 // ============================================================================
-// Scheduled Capture Logic
+// Mode Functions
 // ============================================================================
 
-void checkScheduledCapture() {
-    struct tm timeinfo;
-    if (!getLocalTime(&timeinfo)) {
+void runConfigMode() {
+    static unsigned long lastCheck = 0;
+    
+    // Check every second
+    if (millis() - lastCheck < 1000) {
         return;
     }
+    lastCheck = millis();
     
-    for (int i = 0; i < NUM_CAPTURE_TIMES; i++) {
-        // Check if current time matches scheduled time
-        if (timeinfo.tm_hour == CAPTURE_TIMES[i].hour && 
-            timeinfo.tm_min == CAPTURE_TIMES[i].minute) {
-            
-            // If not already executed for this minute
-            if (!captureExecuted[i]) {
-                Serial.println("\n======================================");
-                Serial.printf("Scheduled capture triggered: %02d:%02d\n", 
-                    CAPTURE_TIMES[i].hour, CAPTURE_TIMES[i].minute);
-                Serial.println("======================================");
-                
-                if (captureAndPostImage()) {
-                    captureExecuted[i] = true;
-                    blinkLED(2, 100); // Success indication
-                } else {
-                    blinkLED(5, 50); // Error indication
-                }
-            }
+    // Check if timeout expired
+    if (webServer && webServer->isTimeoutExpired()) {
+        Serial.println("\n=== Web server timeout expired ===");
+        
+        // Check if we should enter sleep mode or wait mode
+        if (shouldEnterSleepMode()) {
+            enterSleepMode();
         } else {
-            // Reset flag when minute changes
-            captureExecuted[i] = false;
+            // Next capture is soon, enter wait mode
+            Serial.println("Next capture is imminent, entering WAIT mode");
+            currentMode = MODE_WAIT;
+            
+            // Clean up web server
+            if (webServer) {
+                webServer->stop();
+                delete webServer;
+                webServer = nullptr;
+            }
         }
     }
 }
+
+void runCaptureMode() {
+    Serial.println("\n======================================");
+    Serial.println("Executing scheduled capture");
+    Serial.println("======================================");
+    
+    if (!cameraInitialized) {
+        Serial.println("ERROR: Camera not initialized");
+        sleepManager.incrementFailedCaptures();
+        
+        // Check if we should stay awake due to failures
+        if (sleepManager.shouldStayAwake(3)) {
+            Serial.println("Too many failures - staying awake in config mode");
+            currentMode = MODE_CONFIG;
+            
+            // Start web server for troubleshooting
+            webServer = new WebConfigServer(&configManager);
+            webServer->setCameraReady(false);
+            webServer->begin();
+            return;
+        }
+        
+        enterSleepMode();
+        return;
+    }
+    
+    // Attempt capture and upload
+    if (captureAndPostImage()) {
+        Serial.println("✓ Capture successful!");
+        sleepManager.resetFailedCaptures();
+        blinkLED(2, 100);
+    } else {
+        Serial.println("✗ Capture failed");
+        sleepManager.incrementFailedCaptures();
+        blinkLED(5, 50);
+        
+        // Check if we should stay awake due to failures
+        if (sleepManager.shouldStayAwake(3)) {
+            Serial.println("Too many failures - staying awake in config mode");
+            currentMode = MODE_CONFIG;
+            
+            // Start web server for troubleshooting
+            webServer = new WebConfigServer(&configManager);
+            webServer->setCameraReady(cameraInitialized);
+            webServer->begin();
+            return;
+        }
+    }
+    
+    // Enter sleep mode for next capture
+    enterSleepMode();
+}
+
+void runWaitMode() {
+    static unsigned long lastCheck = 0;
+    
+    // Check every 10 seconds
+    if (millis() - lastCheck < 10000) {
+        return;
+    }
+    lastCheck = millis();
+    
+    struct tm timeinfo;
+    if (!ScheduleManager::getCurrentTime(&timeinfo)) {
+        Serial.println("Failed to get current time in wait mode");
+        return;
+    }
+    
+    // Build schedule array from config
+    int numTimes = configManager.getNumCaptureTimes();
+    ScheduleTime schedule[MAX_CAPTURE_TIMES];
+    for (int i = 0; i < numTimes; i++) {
+        schedule[i].hour = configManager.getCaptureHour(i);
+        schedule[i].minute = configManager.getCaptureMinute(i);
+    }
+    
+    // Check if it's time to capture
+    if (scheduleManager.isTimeToCapture(&timeinfo, schedule, numTimes)) {
+        Serial.println("\n=== Time to capture! ===");
+        
+        if (captureAndPostImage()) {
+            Serial.println("✓ Capture successful!");
+            sleepManager.resetFailedCaptures();
+            blinkLED(2, 100);
+        } else {
+            Serial.println("✗ Capture failed");
+            sleepManager.incrementFailedCaptures();
+            blinkLED(5, 50);
+        }
+        
+        // After capture in wait mode, enter sleep or stay in wait
+        if (shouldEnterSleepMode()) {
+            enterSleepMode();
+        } else {
+            Serial.println("Next capture is soon, staying in wait mode");
+        }
+    } else {
+        Serial.printf("Waiting... Current time: %s\n", ScheduleManager::formatTime(&timeinfo).c_str());
+    }
+}
+
+void enterSleepMode() {
+    struct tm timeinfo;
+    if (!ScheduleManager::getCurrentTime(&timeinfo)) {
+        Serial.println("ERROR: Cannot get time for sleep calculation");
+        Serial.println("Restarting...");
+        delay(5000);
+        ESP.restart();
+        return;
+    }
+    
+    // Build schedule array from config
+    int numTimes = configManager.getNumCaptureTimes();
+    if (numTimes == 0) {
+        Serial.println("ERROR: No capture times configured");
+        Serial.println("Restarting...");
+        delay(5000);
+        ESP.restart();
+        return;
+    }
+    
+    ScheduleTime schedule[MAX_CAPTURE_TIMES];
+    for (int i = 0; i < numTimes; i++) {
+        schedule[i].hour = configManager.getCaptureHour(i);
+        schedule[i].minute = configManager.getCaptureMinute(i);
+    }
+    
+    int sleepMargin = configManager.getSleepMarginSec();
+    
+    // Calculate sleep duration
+    long sleepSeconds = scheduleManager.getSecondsUntilWake(&timeinfo, schedule, numTimes, sleepMargin);
+    
+    if (sleepSeconds <= 0) {
+        Serial.println("ERROR: Invalid sleep duration, restarting...");
+        delay(5000);
+        ESP.restart();
+        return;
+    }
+    
+    Serial.printf("Sleeping for %ld seconds\n", sleepSeconds);
+    
+    // Enter deep sleep
+    sleepManager.enterDeepSleep(sleepSeconds);
+    
+    // Code never reaches here
+}
+
+bool shouldEnterSleepMode() {
+    struct tm timeinfo;
+    if (!ScheduleManager::getCurrentTime(&timeinfo)) {
+        return true; // If we can't get time, try to sleep
+    }
+    
+    // Build schedule array from config
+    int numTimes = configManager.getNumCaptureTimes();
+    ScheduleTime schedule[MAX_CAPTURE_TIMES];
+    for (int i = 0; i < numTimes; i++) {
+        schedule[i].hour = configManager.getCaptureHour(i);
+        schedule[i].minute = configManager.getCaptureMinute(i);
+    }
+    
+    int sleepMargin = configManager.getSleepMarginSec();
+    
+    // Calculate seconds until next wake
+    long secondsUntil = scheduleManager.getSecondsUntilWake(&timeinfo, schedule, numTimes, sleepMargin);
+    
+    // If more than MIN_SLEEP_THRESHOLD_SEC away, sleep
+    return (secondsUntil > MIN_SLEEP_THRESHOLD_SEC);
+}
+
+// ============================================================================
+// Scheduled Capture Logic (REMOVED - replaced by mode functions)
+// ============================================================================
 
 // ============================================================================
 // Image Capture and Upload
@@ -285,10 +537,23 @@ void checkScheduledCapture() {
 bool captureAndPostImage() {
     Serial.println("\n--- Capturing Image ---");
     
+    if (!cameraInitialized) {
+        Serial.println("Camera not initialized!");
+        return false;
+    }
+    
+    // Acquire camera mutex to prevent concurrent access from web server
+    if (!CameraMutex::lock(5000)) {
+        Serial.println("Failed to acquire camera mutex (timeout)");
+        return false;
+    }
+    
     // Capture image
     camera_fb_t * fb = esp_camera_fb_get();
+    
     if (!fb) {
         Serial.println("Camera capture failed!");
+        CameraMutex::unlock();
         return false;
     }
     
@@ -300,19 +565,29 @@ bool captureAndPostImage() {
     client.setInsecure(); // For testing; use proper certificate validation in production
     
     HTTPClient http;
-    http.begin(client, SERVER_URL);
+    
+    const char* serverUrl = configManager.getServerUrl();
+    http.begin(client, serverUrl);
     
     // Set headers
     http.addHeader("Content-Type", "image/jpeg");
-    http.addHeader("X-Auth-Token", AUTH_TOKEN);  // Using X-Auth-Token for Apache/PHP-FPM compatibility
+    http.addHeader("X-Auth-Token", configManager.getAuthToken());
     http.addHeader("X-Device-ID", WiFi.macAddress());
-    http.addHeader("X-Timestamp", getFormattedTime());
+    
+    // Get formatted timestamp
+    struct tm timeinfo;
+    String timestamp = "unknown";
+    if (ScheduleManager::getCurrentTime(&timeinfo)) {
+        timestamp = ScheduleManager::formatTime(&timeinfo);
+    }
+    http.addHeader("X-Timestamp", timestamp);
     
     // Send POST request
     int httpResponseCode = http.POST(fb->buf, fb->len);
     
-    // Release frame buffer
+    // Release frame buffer and mutex
     esp_camera_fb_return(fb);
+    CameraMutex::unlock();
     
     // Check response
     bool success = false;

@@ -6,8 +6,8 @@
 // ============================================================================
 
 // NTP Configuration
-const char* NTP_SERVER = "pool.ntp.org";
-const char* NTP_SERVER2 = "time.nist.gov";
+#define NTP_SERVER "pool.ntp.org"
+#define NTP_SERVER2 "time.nist.gov"
 const long GMT_OFFSET_SEC = 3600;           // Adjust for your timezone (e.g., -18000 for EST)
 const int DAYLIGHT_OFFSET_SEC = 3600;       // Adjust for daylight saving (e.g., 3600)
 
@@ -30,6 +30,12 @@ const int NUM_CAPTURE_TIMES = sizeof(CAPTURE_TIMES) / sizeof(CaptureTime);
 
 // NTP Update Interval (in milliseconds)
 const unsigned long NTP_UPDATE_INTERVAL = (3600*1000*8); // 8 hours
+
+// Web Configuration Server Settings
+const int DEFAULT_WEB_TIMEOUT_MIN = 15;        // Web server active time after boot/activity
+const int MAX_WEB_TIMEOUT_MIN = 240;           // Maximum web timeout (4 hours)
+const int DEFAULT_SLEEP_MARGIN_SEC = 60;      // Wake up N seconds before scheduled capture
+const int MIN_SLEEP_THRESHOLD_SEC = 300;      // Don't sleep if next capture < 5 minutes away
 
 // Camera Configuration for XIAO ESP32S3 Sense
 #define PWDN_GPIO_NUM     -1
