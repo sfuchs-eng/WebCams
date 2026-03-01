@@ -73,7 +73,7 @@ function processImage($rawImagePath, $mac) {
     $outputPath = str_replace('.jpg.raw', '.jpg', $rawImagePath);
     $success = imagejpeg($image, $outputPath, 90);
     
-    imagedestroy($image);
+    // GdImage objects auto-cleanup in PHP 8.0+ (imagedestroy deprecated in PHP 8.5)
     
     // Remove raw file
     unlink($rawImagePath);
@@ -146,8 +146,7 @@ function createThumbnail($imagePath, $maxWidth = 400, $maxHeight = 300) {
     
     imagejpeg($thumb, $thumbPath, 80);
     
-    imagedestroy($source);
-    imagedestroy($thumb);
+    // GdImage objects auto-cleanup in PHP 8.0+ (imagedestroy deprecated in PHP 8.5)
     
     return $thumbPath;
 }

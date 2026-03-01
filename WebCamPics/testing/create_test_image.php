@@ -35,7 +35,7 @@ imagestring($image, 3, 200, 250, $timestamp, $white);
 // Output to file
 $outputFile = __DIR__ . '/test_image.jpg';
 imagejpeg($image, $outputFile, 85);
-imagedestroy($image);
+// GdImage objects auto-cleanup in PHP 8.0+ (imagedestroy deprecated in PHP 8.5)
 
 echo "Test image created: $outputFile\n";
 echo "Size: " . filesize($outputFile) . " bytes\n";
