@@ -14,16 +14,24 @@ Upload images from Raspberry Pi cameras to the WebCamPics server with enhanced W
 
 ### 1. Quick Setup
 
+Generally it is recommended to use NetworkManager for WiFi management on Raspberry Pi OS, as it provides better stability and easier configuration. However, if you prefer to use the built-in `wpa_supplicant` and manual WiFi configuration, you can run the following script to apply optimizations and set up the WiFi watchdog:
+
 ```bash
 cd RasPiCam
 ./install-stability-tools.sh
 ```
 
 This will:
+
 - Make all scripts executable
 - Apply WiFi stability optimizations
 - Install WiFi watchdog service
 - Configure power management settings
+
+Wifi stability improvements when using NetworkManager:
+
+- run `sudo nmcli connection modify <YourSSID> 802-11-wireless.band bg` to enforce 2.4GHz band. Better range than 5GHz and sufficient for camera uploads.
+- run `./setup-wifi-stability.sh` to apply additional optimizations (disable power management, set regulatory domain, etc.).
 
 ### 2. Configure Credentials
 
@@ -43,9 +51,10 @@ Add scheduled captures:
 crontab -e
 ```
 
-Add line for captures every 5 minutes:
+Add line for captures every 1h from 07:00 to 17:00:
+
 ```cron
-*/5 * * * * /home/pi/RasPiCam/capture-upload-image.sh >> /var/log/webcam-upload.log 2>&1
+0 7-17 * * * /home/pi/RasPiCam/capture-upload-image.sh >> /var/log/webcam-upload.log 2>&1
 ```
 
 ## WiFi Stability Features

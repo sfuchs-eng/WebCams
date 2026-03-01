@@ -2,6 +2,9 @@
 
 # WiFi Stability Tools Installation Script for RasPiCam
 # This script installs WiFi monitoring and stability improvements
+#
+# Recommended alternative:
+# install NetworkManager and use its built-in WiFi management features
 
 set -e
 

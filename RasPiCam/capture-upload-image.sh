@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Configuration
-CAM="CoolCam"
-AUTH_TOKEN='your-secret-token-here'
-POSTHANDLER='https://yourdomain.com/cams/upload.php'
+# Configuration, either put here or provide from environment variables
+CAM="${CAM_NAME:-CoolCam}"
+AUTH_TOKEN="${CAM_AUTH_TOKEN:-your-secret-token-here}"
+POSTHANDLER="${CAM_POSTHANDLER:-https://yourdomain.com/cams/upload.php}"
 
 # Retry settings
 MAX_RETRIES=3
@@ -11,6 +11,39 @@ RETRY_DELAY=5
 CAPTURE_TIMEOUT=10
 CONNECTION_TIMEOUT=10
 MAX_TIME=30
+
+# Log configuration
+LOG_DIR="/var/log/webcam"
+LOG_FILE="${LOG_DIR}/capture.log"
+
+# Ensure log directory exists
+mkdir -p "${LOG_DIR}"
+
+# Log rotation function - rotates daily, keeps only previous day
+rotate_logs() {
+	if [ ! -d "${LOG_DIR}" ]; then
+		mkdir -p "${LOG_DIR}"
+	fi
+    if [ -f "${LOG_FILE}" ]; then
+        # Get the modification date of the log file
+        local log_date=$(date -r "${LOG_FILE}" +%Y-%m-%d)
+        local today=$(date +%Y-%m-%d)
+        
+        # If the log file is from a different day, rotate it
+        if [ "${log_date}" != "${today}" ]; then
+            mv "${LOG_FILE}" "${LOG_FILE}.${log_date}"
+        fi
+    fi
+    
+    # Remove logs older than 30 days (keep current day and previous 29 days)
+    find "${LOG_DIR}" -name "capture.log.*" -type f -mtime +30 -delete 2>/dev/null
+}
+
+# Perform log rotation
+rotate_logs
+
+# Redirect all output to log file and stdout
+exec > >(tee -a "${LOG_FILE}") 2>&1
 
 # Function to check internet connectivity
 check_connectivity() {

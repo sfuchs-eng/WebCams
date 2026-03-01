@@ -19,7 +19,8 @@ fi
 
 # Function to log messages
 log_message() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
+    # uncomment if you want logging. But ensure logrotation is set up to prevent log file from growing indefinitely
+    #echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
 }
 
 # Function to restart WiFi interface
