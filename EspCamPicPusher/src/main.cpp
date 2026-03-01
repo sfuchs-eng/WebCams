@@ -10,6 +10,7 @@
 #include "SleepManager.h"
 #include "WebConfigServer.h"
 #include "CameraMutex.h"
+#include "CameraCapture.h"
 
 // ============================================================================
 // Global Variables
@@ -749,16 +750,13 @@ bool captureAndPostImage() {
         return false;
     }
     
-    // Capture image
-    camera_fb_t * fb = esp_camera_fb_get();
+    // Capture image with sensor warm-up for proper AWB/AEC/AGC
+    camera_fb_t * fb = CameraCapture::captureFrame(true);
     
     if (!fb) {
-        Serial.println("Camera capture failed!");
         CameraMutex::unlock();
         return false;
     }
-    
-    Serial.printf("Image captured: %d bytes\n", fb->len);
     
     // Prepare HTTPS POST
     Serial.println("\n--- Uploading Image ---");
@@ -787,7 +785,7 @@ bool captureAndPostImage() {
     int httpResponseCode = http.POST(fb->buf, fb->len);
     
     // Release frame buffer and mutex
-    esp_camera_fb_return(fb);
+    CameraCapture::releaseFrame(fb);
     CameraMutex::unlock();
     
     // Check response

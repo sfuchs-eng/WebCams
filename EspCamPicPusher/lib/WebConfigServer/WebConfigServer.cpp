@@ -1,5 +1,6 @@
 #include "WebConfigServer.h"
 #include "CameraMutex.h"
+#include "CameraCapture.h"
 #include "ScheduleManager.h"
 #include <WiFi.h>
 #include <ArduinoJson.h>
@@ -376,8 +377,8 @@ void WebConfigServer::handlePreview(AsyncWebServerRequest* request) {
         return;
     }
     
-    // Capture image
-    camera_fb_t* fb = esp_camera_fb_get();
+    // Capture preview image with sensor warm-up for proper auto-adjustment
+    camera_fb_t* fb = CameraCapture::captureFrame(true);
     if (!fb) {
         CameraMutex::unlock();
         request->send(500, "text/plain", "Camera capture failed");
@@ -397,7 +398,7 @@ void WebConfigServer::handlePreview(AsyncWebServerRequest* request) {
     size_t jpegLen = fb->len;
     
     // Return frame buffer immediately (we have a copy)
-    esp_camera_fb_return(fb);
+    CameraCapture::releaseFrame(fb);
     CameraMutex::unlock();
     
     // Send image as JPEG using the copied data
