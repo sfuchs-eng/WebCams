@@ -92,6 +92,7 @@ void setup() {
         // Start web server
         webServer = new WebConfigServer(&configManager);
         webServer->setCameraReady(cameraInitialized);
+        webServer->setCaptureCallback(captureAndPostImage);
         if (!webServer->begin()) {
             Serial.println("ERROR: Failed to start web server");
         }
@@ -328,12 +329,57 @@ void updateTime() {
 
 void runConfigMode() {
     static unsigned long lastCheck = 0;
+    static unsigned long lastCaptureCheck = 0;
+    static int lastCaptureMinute = -1; // Track last capture to prevent duplicates
     
     // Check every second
     if (millis() - lastCheck < 1000) {
         return;
     }
     lastCheck = millis();
+    
+    // Check if it's time to capture (even while in config mode)
+    // Check every 10 seconds to be responsive to schedule changes
+    if (millis() - lastCaptureCheck >= 10000) {
+        lastCaptureCheck = millis();
+        
+        struct tm timeinfo;
+        if (ScheduleManager::getCurrentTime(&timeinfo)) {
+            int currentMinute = timeinfo.tm_hour * 60 + timeinfo.tm_min; // Minutes since midnight
+            int numTimes = configManager.getNumCaptureTimes();
+            if (numTimes > 0) {
+                ScheduleTime schedule[MAX_CAPTURE_TIMES];
+                for (int i = 0; i < numTimes; i++) {
+                    schedule[i].hour = configManager.getCaptureHour(i);
+                    schedule[i].minute = configManager.getCaptureMinute(i);
+                }
+                
+                // Only capture if it's time AND we haven't captured in this minute yet
+                if (scheduleManager.isTimeToCapture(&timeinfo, schedule, numTimes) && 
+                    currentMinute != lastCaptureMinute) {
+                    Serial.println("\n=== Scheduled capture while in CONFIG mode ===");
+                    
+                    if (captureAndPostImage()) {
+                        Serial.println("✓ Capture successful!");
+                        sleepManager.resetFailedCaptures();
+                        blinkLED(2, 100);
+                    } else {
+                        Serial.println("✗ Capture failed");
+                        sleepManager.incrementFailedCaptures();
+                        blinkLED(5, 50);
+                    }
+                    
+                    // Remember we captured in this minute
+                    lastCaptureMinute = currentMinute;
+                    
+                    // Reset web server activity timer to give user more time after capture
+                    if (webServer) {
+                        webServer->resetActivityTimer();
+                    }
+                }
+            }
+        }
+    }
     
     // Check if timeout expired
     if (webServer && webServer->isTimeoutExpired()) {
@@ -374,6 +420,7 @@ void runCaptureMode() {
             // Start web server for troubleshooting
             webServer = new WebConfigServer(&configManager);
             webServer->setCameraReady(false);
+            webServer->setCaptureCallback(captureAndPostImage);
             webServer->begin();
             return;
         }
@@ -400,6 +447,7 @@ void runCaptureMode() {
             // Start web server for troubleshooting
             webServer = new WebConfigServer(&configManager);
             webServer->setCameraReady(cameraInitialized);
+            webServer->setCaptureCallback(captureAndPostImage);
             webServer->begin();
             return;
         }

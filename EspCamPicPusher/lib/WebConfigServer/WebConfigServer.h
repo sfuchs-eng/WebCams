@@ -6,6 +6,9 @@
 #include "ConfigManager.h"
 #include "esp_camera.h"
 
+// Callback function type for capture trigger
+typedef bool (*CaptureCallback)();
+
 class WebConfigServer {
 public:
     WebConfigServer(ConfigManager* configMgr, int port = 80);
@@ -51,6 +54,12 @@ public:
      */
     void setCameraReady(bool initialized);
     
+    /**
+     * Set callback function for manual capture trigger
+     * @param callback Function to call when capture is requested
+     */
+    void setCaptureCallback(CaptureCallback callback);
+    
 private:
     AsyncWebServer* server;
     ConfigManager* configManager;
@@ -58,6 +67,7 @@ private:
     unsigned long lastActivityMillis;
     unsigned long timeoutMillis;
     bool cameraReady;
+    CaptureCallback captureCallback;
     
     // Setup HTTP endpoints
     void setupRoutes();

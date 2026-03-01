@@ -1,5 +1,6 @@
 #include "WebConfigServer.h"
 #include "CameraMutex.h"
+#include "ScheduleManager.h"
 #include <WiFi.h>
 #include <ArduinoJson.h>
 
@@ -8,6 +9,7 @@ WebConfigServer::WebConfigServer(ConfigManager* configMgr, int port) {
     serverPort = port;
     server = nullptr;
     lastActivityMillis = 0;
+    captureCallback = nullptr;
     timeoutMillis = 0;
     cameraReady = false;
 }
@@ -155,8 +157,19 @@ void WebConfigServer::handleCapture(AsyncWebServerRequest* request) {
         return;
     }
     
-    // This is a simplified trigger - actual upload would happen in main code
-    request->send(200, "application/json", "{\"success\":true,\"message\":\"Capture triggered\"}");
+    if (!captureCallback) {
+        request->send(500, "application/json", "{\"success\":false,\"message\":\"Capture callback not set\"}");
+        return;
+    }
+    
+    // Trigger the capture and upload via callback
+    bool success = captureCallback();
+    
+    if (success) {
+        request->send(200, "application/json", "{\"success\":true,\"message\":\"Image captured and uploaded successfully\"}");
+    } else {
+        request->send(500, "application/json", "{\"success\":false,\"message\":\"Capture or upload failed\"}");
+    }
 }
 
 void WebConfigServer::handlePreview(AsyncWebServerRequest* request) {
@@ -226,6 +239,14 @@ void WebConfigServer::handleStatus(AsyncWebServerRequest* request) {
     doc["remainingTimeout"] = getRemainingSeconds();
     doc["freeHeap"] = ESP.getFreeHeap();
     doc["cameraReady"] = cameraReady;
+    
+    // Add current local time
+    struct tm timeinfo;
+    if (ScheduleManager::getCurrentTime(&timeinfo)) {
+        doc["localTime"] = ScheduleManager::formatTime(&timeinfo);
+    } else {
+        doc["localTime"] = "Time not synced";
+    }
     
     String output;
     serializeJson(doc, output);
@@ -432,6 +453,7 @@ String WebConfigServer::generateHtmlPage() {
             <div class="section">
                 <h2>📊 Device Status</h2>
                 <div class="status-info" id="statusInfo">
+                    <p><strong>Local Time:</strong> <span id="localTime">-</span></p>
                     <p><strong>IP:</strong> <span id="ipAddress">-</span></p>
                     <p><strong>MAC:</strong> <span id="macAddress">-</span></p>
                     <p><strong>RSSI:</strong> <span id="rssi">-</span> dBm</p>
@@ -501,7 +523,8 @@ String WebConfigServer::generateHtmlPage() {
             <!-- Manual Capture -->
             <div class="section">
                 <h2>📸 Manual Capture</h2>
-                <button class="btn btn-success" onclick="capturePreview()">Capture & Preview</button>
+                <button class="btn btn-success" onclick="capturePreview()">📷 Capture & Preview</button>
+                <button class="btn btn-primary" onclick="captureAndPush()" style="margin-left: 10px;">📤 Capture & Push to Server</button>
                 <div class="preview-container" id="previewContainer"></div>
             </div>
 
@@ -535,6 +558,7 @@ String WebConfigServer::generateHtmlPage() {
                     document.getElementById('countdown').textContent = 
                         `⏱️ ${minutes}:${seconds.toString().padStart(2, '0')}`;
                     
+                    document.getElementById('localTime').textContent = data.localTime || '-';
                     document.getElementById('ipAddress').textContent = data.ipAddress;
                     document.getElementById('macAddress').textContent = data.macAddress;
                     document.getElementById('rssi').textContent = data.rssi;
@@ -665,6 +689,23 @@ String WebConfigServer::generateHtmlPage() {
                     showMessage('Capture failed: ' + err, true);
                 });
         }
+        
+        function captureAndPush() {
+            showMessage('Capturing and uploading...');
+            
+            fetch('/capture')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        showMessage('✓ ' + data.message);
+                    } else {
+                        showMessage('✗ ' + data.message, true);
+                    }
+                })
+                .catch(err => {
+                    showMessage('✗ Request failed: ' + err, true);
+                });
+        }
 
         // Initialize
         loadConfig();
@@ -707,4 +748,8 @@ String WebConfigServer::getIpAddress() {
 
 void WebConfigServer::setCameraReady(bool initialized) {
     cameraReady = initialized;
+}
+
+void WebConfigServer::setCaptureCallback(CaptureCallback callback) {
+    captureCallback = callback;
 }
