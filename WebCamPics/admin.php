@@ -140,8 +140,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $identifier = $_POST['mac'];
                 
                 // Delete all images for this camera
-                deleteCameraImages($identifier);
+                $success = deleteCameraImages($identifier);
                 
+                // Handle AJAX request
+                if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && 
+                    strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                    header('Content-Type: application/json');
+                    if ($success) {
+                        echo json_encode(['success' => true, 'message' => 'Images purged successfully']);
+                    } else {
+                        echo json_encode(['success' => false, 'message' => 'Failed to purge images']);
+                    }
+                    exit;
+                }
+                
+                // Fallback to redirect for non-AJAX requests
                 header('Location: ' . baseUrl('admin.php?msg=purged'));
                 exit;
                 break;
@@ -149,14 +162,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Get all cameras (from filesystem)
-$allCameras = getAllCameras();
+// Get all cameras from config (not just those with images)
 $camerasConfig = loadCamerasConfig();
-
-// Merge with config
 $cameras = [];
-foreach ($allCameras as $mac => $cameraData) {
-    $cameras[$mac] = getCameraConfig($mac);
+
+foreach ($camerasConfig as $key => $cameraData) {
+    if ($key === '_example_') continue;
+    
+    // Get the identifier (device_id or mac)
+    $identifier = isset($cameraData['device_id']) ? $cameraData['device_id'] : $cameraData['mac'];
+    
+    // Get full config and add image count
+    $camera = getCameraConfig($identifier);
+    $camera['image_count'] = countCameraImages($identifier);
+    
+    $cameras[$identifier] = $camera;
 }
 ?>
 <!DOCTYPE html>
@@ -220,6 +240,7 @@ foreach ($allCameras as $mac => $cameraData) {
                             <div class="camera-item-details">
                                 <p><strong>Identifier:</strong> <?php echo htmlspecialchars(isset($camera['device_id']) ? $camera['device_id'] : $camera['mac']); ?></p>
                                 <p><strong>Location:</strong> <?php echo htmlspecialchars($camera['location']); ?></p>
+                                <p><strong>No images:</strong> <span id="img-count-<?php echo htmlspecialchars($mac); ?>"><?php echo $camera['image_count'] ?? 0; ?></span></p>
                                 <p><strong>Rotation:</strong> <?php echo $camera['rotate']; ?>°</p>
                                 <p><strong>Text Overlay:</strong> 
                                     <?php echo $camera['add_title'] ? '✓ Title' : '✗ Title'; ?>, 
@@ -228,12 +249,8 @@ foreach ($allCameras as $mac => $cameraData) {
                             </div>
                             <div class="camera-item-actions">
                                 <button type="button" class="btn btn-small" onclick="openEditModal('<?php echo htmlspecialchars($mac, ENT_QUOTES); ?>')">Edit</button>
-                                <form method="POST" style="display: inline;" onsubmit="return confirm('Purge all stored images for this camera?');">
-                                    <input type="hidden" name="action" value="purge_images">
-                                    <input type="hidden" name="mac" value="<?php echo htmlspecialchars(isset($camera['device_id']) ? $camera['device_id'] : $camera['mac']); ?>">
-                                    <button type="submit" class="btn btn-small btn-warning">Purge img</button>
-                                </form>
-                                <form method="POST" style="display: inline;" onsubmit="return confirm('Delete this camera configuration?');">
+                                <button type="button" class="btn btn-small btn-warning" onclick="purgeImages('<?php echo htmlspecialchars($mac, ENT_QUOTES); ?>', '<?php echo htmlspecialchars(isset($camera['device_id']) ? $camera['device_id'] : $camera['mac'], ENT_QUOTES); ?>')">Purge img</button>
+                                <form method="POST" style="display: inline;" onsubmit="return confirm('Delete this camera configuration and all images?');">
                                     <input type="hidden" name="action" value="delete_camera">
                                     <input type="hidden" name="mac" value="<?php echo htmlspecialchars(isset($camera['device_id']) ? $camera['device_id'] : $camera['mac']); ?>">
                                     <button type="submit" class="btn btn-small btn-danger">Delete</button>
@@ -378,6 +395,41 @@ foreach ($allCameras as $mac => $cameraData) {
                 closeEditModal();
             }
         });
+        
+        // Purge images via AJAX
+        function purgeImages(displayMac, identifier) {
+            if (!confirm('Purge all stored images for this camera? The camera configuration will remain.')) {
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('action', 'purge_images');
+            formData.append('mac', identifier);
+            
+            fetch(window.location.href, {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Update image count display
+                    const countElement = document.getElementById('img-count-' + displayMac);
+                    if (countElement) {
+                        countElement.textContent = '0';
+                    }
+                } else {
+                    alert('Failed to purge images: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Failed to purge images: ' + error);
+            });
+        }
     </script>
 </body>
 </html>

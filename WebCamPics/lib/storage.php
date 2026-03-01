@@ -188,6 +188,23 @@ function cleanupOldImages($days = 14) {
 }
 
 /**
+ * Count images for a specific camera
+ * 
+ * @param string $identifier Camera identifier (MAC address or device ID)
+ * @return int Number of images
+ */
+function countCameraImages($identifier) {
+    $dir = getCameraDir($identifier);
+    
+    if (!is_dir($dir)) {
+        return 0;
+    }
+    
+    $files = glob($dir . '/*.jpg');
+    return count($files);
+}
+
+/**
  * Delete all images and directory for a specific camera
  * 
  * @param string $identifier Camera identifier (MAC address or device ID)

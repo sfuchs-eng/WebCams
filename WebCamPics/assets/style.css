@@ -531,6 +531,17 @@ nav a:hover {
     border-color: #dc2626;
 }
 
+.btn-warning {
+    background: var(--warning-color);
+    color: white;
+    border-color: var(--warning-color);
+}
+
+.btn-warning:hover {
+    background: #d97706;
+    border-color: #d97706;
+}
+
 .btn-small {
     padding: 0.25rem 0.75rem;
     font-size: 0.75rem;
