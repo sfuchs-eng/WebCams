@@ -472,6 +472,7 @@ void WebConfigServer::handlePreview(AsyncWebServerRequest* request) {
 void WebConfigServer::handleStatus(AsyncWebServerRequest* request) {
     StaticJsonDocument<512> doc;
     
+    doc["firmwareVersion"] = FIRMWARE_VERSION;
     doc["macAddress"] = WiFi.macAddress();
     doc["rssi"] = WiFi.RSSI();
     doc["uptime"] = millis() / 1000;
@@ -750,6 +751,7 @@ String WebConfigServer::generateHtmlPage() {
             <div class="section">
                 <h2>📊 Device Status</h2>
                 <div class="status-info" id="statusInfo">
+                    <p><strong>Firmware:</strong> <span id="firmwareVersion">-</span></p>
                     <p><strong>Local Time:</strong> <span id="localTime">-</span></p>
                     <p><strong>IP:</strong> <span id="ipAddress">-</span></p>
                     <p><strong>MAC:</strong> <span id="macAddress">-</span></p>
@@ -861,6 +863,15 @@ String WebConfigServer::generateHtmlPage() {
         let isAuthenticated = false;
         let authRequired = false;
 
+        function loadStaticStatus() {
+            fetch('/status')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('firmwareVersion').textContent = data.firmwareVersion || '-';
+                    document.getElementById('macAddress').textContent = data.macAddress;
+                });
+        }
+
         function showMessage(text, isError = false) {
             const msg = document.getElementById('message');
             msg.textContent = text;
@@ -887,7 +898,6 @@ String WebConfigServer::generateHtmlPage() {
                         `⏱️ ${minutes}:${seconds.toString().padStart(2, '0')}`;
                     
                     document.getElementById('localTime').textContent = data.localTime || '-';
-                    document.getElementById('macAddress').textContent = data.macAddress;
                     document.getElementById('rssi').textContent = data.rssi;
                     document.getElementById('freeHeap').textContent = data.freeHeap.toLocaleString();
                     
@@ -1183,6 +1193,7 @@ String WebConfigServer::generateHtmlPage() {
         }
 
         // Initialize
+        loadStaticStatus();
         loadConfig();
         updateCountdown();
         setInterval(updateCountdown, 1000);
