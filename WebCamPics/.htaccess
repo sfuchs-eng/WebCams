@@ -8,15 +8,15 @@
     Require all granted
 </Files>
 
-# Protect admin panel with HTTP Basic Authentication
-<Files "admin.php">
+# Protect admin panel and OTA upload with HTTP Basic Authentication
+<FilesMatch "^(admin|ota-upload)\.php$">
     AuthType Basic
     AuthName "WebCam Admin Panel"
     # IMPORTANT: Update this path to the absolute filesystem path of your .htpasswd file
     # Example: /var/www/html/webcams/config/.htpasswd
     AuthUserFile /home/gnah/vhost/gnah.ch/httpdocs/cams/config/.htpasswd
     Require valid-user
-</Files>
+</FilesMatch>
 
 # Enable image access
 <FilesMatch "\.(jpg|jpeg|png|gif)$">

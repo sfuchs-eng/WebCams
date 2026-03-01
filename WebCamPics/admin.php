@@ -100,7 +100,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $cameras[$key]['mac'] = $identifier;
                 }
                 
-                if (saveCamerasConfig($cameras)) {
+                $saveSuccess = saveCamerasConfig($cameras);
+                
+                // Handle OTA firmware scheduling
+                if ($saveSuccess && isset($_POST['ota_firmware'])) {
+                    $otaFirmware = trim($_POST['ota_firmware']);
+                    if (empty($otaFirmware)) {
+                        // Clear OTA schedule
+                        clearOtaSchedule($identifier);
+                    } else {
+                        // Schedule OTA update
+                        scheduleOtaUpdate($identifier, $otaFirmware);
+                    }
+                }
+                
+                if ($saveSuccess) {
                     header('Location: ' . baseUrl('admin.php?msg=saved'));
                     exit;
                 } else {
@@ -302,7 +316,22 @@ foreach ($camerasConfig as $key => $cameraData) {
                                 <p><strong>Identifier:</strong> <?php echo htmlspecialchars(isset($camera['device_id']) ? $camera['device_id'] : $camera['mac']); ?></p>
                                 <p><strong>Location:</strong> <?php echo htmlspecialchars($camera['location']); ?></p>
                                 <p><strong>No images:</strong> <span id="img-count-<?php echo htmlspecialchars($mac); ?>"><?php echo $camera['image_count'] ?? 0; ?></span></p>
-                                <p><strong>Rotation:</strong> <?php echo $camera['rotate']; ?>°</p>
+                                <p><strong>Firmware:</strong> <?php echo htmlspecialchars($camera['firmware_version'] ?? 'Unknown'); ?></p>
+                                <?php if (!empty($camera['ota_scheduled'])): ?>
+                                    <p><strong>OTA Update:</strong> 
+                                        <span style="color: #007bff;">⏳ Pending: <?php echo htmlspecialchars($camera['ota_scheduled']); ?></span>
+                                        <?php if (!empty($camera['ota_retry_count'])): ?>
+                                            <span style="color: #ff9800;"> (Attempt <?php echo ($camera['ota_retry_count'] + 1); ?>/2)</span>
+                                        <?php endif; ?>
+                                    </p>
+                                <?php elseif (!empty($camera['ota_last_status']) && $camera['ota_last_status'] === 'failed' && !empty($camera['ota_retry_count']) && $camera['ota_retry_count'] >= 2): ?>
+                                    <p><strong>OTA Status:</strong> <span style="color: #dc3545;">🚫 Failed (<?php echo $camera['ota_retry_count']; ?>/2 retries)</span></p>
+                                <?php elseif (!empty($camera['ota_last_status']) && $camera['ota_last_status'] === 'success'): ?>
+                                    <p><strong>Last OTA:</strong> <span style="color: #28a745;">✅ Success</span></p>
+                                <?php elseif (!empty($camera['ota_last_status']) && $camera['ota_last_status'] === 'rollback'): ?>
+                                    <p><strong>OTA Status:</strong> <span style="color: #ff9800;">⚠️ Rolled back</span></p>
+                                <?php endif; ?>
+                                <p><strong></strong>Rotation:</strong> <?php echo $camera['rotate']; ?>°</p>
                                 <p><strong>Text Overlay:</strong> 
                                     <?php echo $camera['add_title'] ? '✓ Title' : '✗ Title'; ?>, 
                                     <?php echo $camera['add_timestamp'] ? '✓ Timestamp' : '✗ Timestamp'; ?>
@@ -627,44 +656,7 @@ foreach ($camerasConfig as $key => $cameraData) {
             });
         }
         
-        // Intercept form submission to handle OTA scheduling
-        document.getElementById('editForm').addEventListener('submit', function(e) {
-            const mac = document.getElementById('edit_mac').value;
-            const otaFirmware = document.getElementById('edit_ota_firmware').value;
-            
-            // Schedule OTA if firmware selected and different from current
-            const camera = cameraData[mac];
-            if (camera && otaFirmware && otaFirmware !== (camera.ota_scheduled || '')) {
-                e.preventDefault();  // Prevent default submission
-                
-                const formData = new FormData();
-                formData.append('action', 'schedule_ota');
-                formData.append('mac', mac);
-                formData.append('firmware_file', otaFirmware);
-                
-                fetch(window.location.href, {
-                    method: 'POST',
-                    headers: {
-                        'X-Requested-With': 'XMLHttpRequest'
-                    },
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        // Now submit the main form
-                        this.submit();
-                    } else {
-                        alert('Failed to schedule OTA update');
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('Failed to schedule OTA: ' + error);
-                });
-            }
-            // Otherwise, let form submit normally
-        });
+        // Note: OTA scheduling is now handled server-side as part of the save_camera action
     </script>
 </body>
 </html>

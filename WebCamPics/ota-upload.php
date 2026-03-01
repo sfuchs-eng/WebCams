@@ -7,36 +7,8 @@
 require_once __DIR__ . '/lib/ota.php';
 require_once __DIR__ . '/lib/path.php';
 
-// HTTP Basic Auth check (same as admin.php)
-$htpasswdFile = __DIR__ . '/config/.htpasswd';
-$authenticated = false;
-
-if (file_exists($htpasswdFile)) {
-    if (!isset($_SERVER['PHP_AUTH_USER']) || !isset($_SERVER['PHP_AUTH_PW'])) {
-        header('WWW-Authenticate: Basic realm="OTA Upload"');
-        header('HTTP/1.1 401 Unauthorized');
-        die('Authentication required');
-    }
-    
-    $users = file($htpasswdFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-    foreach ($users as $line) {
-        list($user, $hash) = explode(':', $line, 2);
-        if ($user === $_SERVER['PHP_AUTH_USER']) {
-            // Verify password (Apache MD5 or bcrypt)
-            if (password_verify($_SERVER['PHP_AUTH_PW'], $hash) || 
-                crypt($_SERVER['PHP_AUTH_PW'], $hash) === $hash) {
-                $authenticated = true;
-                break;
-            }
-        }
-    }
-    
-    if (!$authenticated) {
-        header('WWW-Authenticate: Basic realm="OTA Upload"');
-        header('HTTP/1.1 401 Unauthorized');
-        die('Invalid credentials');
-    }
-}
+// Authentication is handled by .htaccess (same realm as admin.php)
+// No need for duplicate auth code here
 
 // Handle firmware upload
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {

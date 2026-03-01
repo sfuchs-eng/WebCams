@@ -90,7 +90,7 @@ else
 fi
 
 # Extract firmware version from platformio.ini
-FIRMWARE_VERSION=$(grep -oP 'FIRMWARE_VERSION=\\"\K[^"]+' platformio.ini || echo "unknown")
+FIRMWARE_VERSION=$(grep "FIRMWARE_VERSION" platformio.ini | grep -oP '\d+\.\d+\.\d+' || echo "unknown")
 
 # PlatformIO paths
 PLATFORMIO_BIN="$HOME/.platformio/penv/bin/pio"
@@ -147,7 +147,7 @@ echo -e "Description: ${YELLOW}$FIRMWARE_DESCRIPTION${NC}"
 echo ""
 
 # Generate firmware filename
-FIRMWARE_FILENAME="firmware_v${FIRMWARE_VERSION}.bin"
+FIRMWARE_FILENAME="XiaoPicPusher_v${FIRMWARE_VERSION}.bin"
 
 # Upload to server using curl
 UPLOAD_URL="${OTA_SERVER_URL}/ota-upload.php"
