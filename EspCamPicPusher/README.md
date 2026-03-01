@@ -4,14 +4,22 @@ This project is a Seeeduino XIAO ESP32S3 Sense application that captures images 
 
 ## Features
 
+- **WiFi AP+STA Fallback Mode**: Automatic recovery from WiFi configuration issues
+  - On boot with invalid WiFi: Creates unprotected AP `ESP32-CAM-XXXX` at `192.168.4.1`
+  - Runs simultaneous AP+STA mode for seamless configuration updates
+  - Test WiFi credentials live before saving to prevent lock-outs
+  - Auto-reboot with countdown on successful WiFi credential changes
+  - Timer wake retry: 5 attempts at 5-minute intervals before sleeping until next capture
+  - RTC memory persists retry counter across deep sleep cycles
 - **Web Configuration Mode**: On power-up, provides a 15-minute web interface for runtime configuration
-  - Configure WiFi credentials, server URL, authentication token
+  - Configure WiFi credentials with live testing and validation
+  - Server URL and authentication token setup
   - Optional HTTP Basic Auth protection for configuration changes
   - Modify capture schedule times (automatically sorted by time of day)
   - Adjust timezone settings and power management
   - Manual image capture with live preview
   - Manual capture & push to server
-  - Real-time device status (IP, time, heap, signal strength)
+  - Real-time device status (IP, time, heap, signal strength, AP/STA mode)
   - Activity-based timeout (resets on any HTTP request)
   - Responsive to schedule changes (checks every 10 seconds)
 - **Deep Sleep Power Management**: Ultra-low power consumption (~10-150 µA) between scheduled captures
@@ -43,9 +51,11 @@ This project is a Seeeduino XIAO ESP32S3 Sense application that captures images 
 
 1. **Flash the firmware** to your XIAO ESP32S3 Sense
 2. **Power on** - Device enters CONFIG mode for 15 minutes
-3. **Connect** to the same WiFi network or note device IP from serial monitor
-4. **Browse** to `http://<DEVICE_IP>/` and configure via web UI:
-   - WiFi credentials
+3. **Connect** to device:
+   - **If WiFi configured**: Connect to same network, browse to `http://<DEVICE_IP>/`
+   - **If WiFi fails**: Device creates AP `ESP32-CAM-XXXX`, connect phone/laptop to AP at `http://192.168.4.1`
+4. **Configure via web UI**:
+   - WiFi credentials (click "🔍 Test WiFi Connection" before saving)
    - Server URL and authentication token
    - Capture schedule times (automatically sorted chronologically)
    - Timezone settings
@@ -53,7 +63,10 @@ This project is a Seeeduino XIAO ESP32S3 Sense application that captures images 
 5. **Test** using manual capture buttons:
    - "Capture & Preview" to test camera without uploading
    - "Capture & Push to Server" to test full upload pipeline
-6. **Save** configuration - Device enters deep sleep mode and wakes for scheduled captures
+6. **Save** configuration:
+   - If WiFi changed in AP mode: Device tests connection, saves, and reboots automatically
+   - Normal save: Configuration persists to NVS, device enters deep sleep
+7. **Reconnect** after reboot (if WiFi changed): Device now connects to new WiFi network
 
 ### Advanced: Pre-Configure Defaults (Optional)
 
@@ -189,13 +202,14 @@ The device operates in three distinct modes:
 #### 2. CAPTURE Mode (Quick Capture)
 - **Triggers**: Timer wake from deep sleep
 - **Actions**:
-  1. Connect to WiFi
+  1. Connect to WiFi (with retry logic)
   2. Sync NTP (if >24 hours since last sync)
   3. Initialize camera
   4. Capture and upload image
   5. Calculate next wake time
   6. Enter deep sleep
 - **LED**: 2 slow blinks on success, 5 fast blinks on error
+- **WiFi Retry**: If connection fails, retries 5 times at 5-minute intervals before sleeping until next scheduled capture
 - **Recovery**: After 3 consecutive failures, stays awake in CONFIG mode
 
 #### 3. WAIT Mode (Active Waiting)
@@ -228,8 +242,8 @@ The project is organized into modular libraries for maintainability:
 
 - **ConfigManager**: NVS-backed configuration storage and JSON serialization
 - **ScheduleManager**: Time-based scheduling calculations and NTP sync
-- **SleepManager**: Deep sleep control with RTC memory persistence
-- **WebConfigServer**: Async HTTP server with web UI and REST API
+- **SleepManager**: Deep sleep control with RTC memory persistence (boot count, NTP sync time, failure counters, WiFi retry count)
+- **WebConfigServer**: Async HTTP server with web UI and REST API (includes WiFi testing endpoint)
 - **CameraMutex**: Thread-safe camera access wrapper using FreeRTOS semaphores
 
 ### Thread Safety
@@ -254,8 +268,9 @@ The web server provides these endpoints:
 
 - `GET /` - Main configuration interface (HTML)
 - `GET /config` - Current configuration as JSON
-- `POST /config` - Save new configuration (JSON body, requires auth if password set)
-- `GET /status` - Device status (IP, MAC, local time, heap, timeout)
+- `POST /config` - Save new configuration (JSON body, requires auth if password set, auto-reboots on WiFi change in AP mode)
+- `POST /config/test` - Test WiFi credentials without saving (returns connection status, IP, RSSI)
+- `GET /status` - Device status (IP, MAC, local time, heap, timeout, AP/STA mode info)
 - `GET /preview` - Capture and return JPEG image (for preview only)
 - `GET /capture` - Capture image and upload to server (returns JSON success/failure)
 - `GET /auth-check` - Check authentication status (returns auth requirement and status)
@@ -273,9 +288,12 @@ Configuration changes can be protected with HTTP Basic Authentication:
 
 ## Troubleshooting
 
-- **Can't Access Web UI**: Power cycle device to re-enter CONFIG mode, check IP in serial output
+- **Can't Access Web UI**: Power cycle device to re-enter CONFIG mode; device creates AP `ESP32-CAM-XXXX` if WiFi fails
+- **Locked Out (Wrong WiFi)**: Device automatically creates AP mode on boot failure, connect to `ESP32-CAM-XXXX` at `192.168.4.1`
+- **WiFi Test Fails**: Check SSID spelling, password, and signal strength; device remains accessible via AP during testing
 - **Can't Save Configuration**: If web authentication is enabled, browser will prompt for credentials
-- **WiFi Connection Issues**: Update credentials via web UI or check `wifi_credentials.h`
+- **Device Reboots After Save**: Normal behavior when WiFi credentials change in AP mode; reconnect to new network after 30 seconds
+- **WiFi Connection Issues**: Use "Test WiFi Connection" button before saving; update credentials via AP mode if needed
 - **Camera Init Failed**: Verify XIAO ESP32S3 **Sense** variant (has camera), check PSRAM enabled
 - **Upload Failures**: Verify server URL, network connectivity, and authentication token via web UI
 - **Wrong Capture Times**: Check timezone settings in web UI, verify NTP sync in serial logs

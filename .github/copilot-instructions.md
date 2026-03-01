@@ -10,7 +10,7 @@ Multi-component distributed camera system: ESP32-S3 firmware ([EspCamPicPusher/]
 
 **ESP32 State Machine**: `MODE_CONFIG` (web UI active) → `MODE_CAPTURE` (wake, capture, upload, sleep) → `MODE_WAIT` (next capture <5 min). See [main.cpp](EspCamPicPusher/src/main.cpp) state handling.
 
-**Library Pattern (ESP32)**: Modular manager classes in separate [lib/](EspCamPicPusher/lib/) directories—`ConfigManager` (NVS persistence), `ScheduleManager` (wake timing), `SleepManager` (deep sleep + RTC memory), `WebConfigServer` (async REST API), `CameraMutex` (thread-safe camera access for dual-core ESP32-S3).
+**Library Pattern (ESP32)**: Modular manager classes in separate [lib/](EspCamPicPusher/lib/) directories—`ConfigManager` (NVS persistence), `ScheduleManager` (wake timing), `SleepManager` (deep sleep + RTC memory + WiFi retry tracking), `WebConfigServer` (async REST API + AP/STA mode awareness), `CameraMutex` (thread-safe camera access for dual-core ESP32-S3).
 
 **PHP Structure**: Modular [lib/](WebCamPics/lib/)—`auth.php` (token validation with fallback headers), `storage.php` (sanitized filesystem ops), `image.php` (GD processing), `path.php` (installation-agnostic URL generation).
 
@@ -66,7 +66,7 @@ esp_camera_fb_return(fb);
 CameraMutex::unlock();
 ```
 
-**RTC Memory Pattern** (ESP32): Store boot count, NTP sync timestamp, failure counters in [RTC data struct](EspCamPicPusher/lib/SleepManager/SleepManager.h) to survive deep sleep (not power cycles). Minimizes NTP requests and enables error recovery.
+**RTC Memory Pattern** (ESP32): Store boot count, NTP sync timestamp, failure counters, WiFi retry count in [RTC data struct](EspCamPicPusher/lib/SleepManager/SleepManager.h) to survive deep sleep (not power cycles). Minimizes NTP requests and enables error recovery. WiFi retry counter persists across 5-minute retry intervals during timer wake.
 
 **Power Management**: Default to deep sleep (~10-150 µA). Wake `sleepMarginSec` (default 60s) before capture. Don't sleep if next capture <5 min away. See [SleepManager](EspCamPicPusher/lib/SleepManager/).
 
@@ -91,6 +91,13 @@ http.addHeader("X-Device-ID", WiFi.macAddress());
 http.POST(imageBuffer, imageLength);
 ```
 
+**WiFi Modes** (ESP32):
+- **STA only**: `WiFi.mode(WIFI_STA)` for normal operation after successful config
+- **AP+STA**: `WiFi.mode(WIFI_AP_STA)` + `WiFi.softAP()` when WiFi fails on boot
+- AP SSID format: `ESP32-CAM-{last4MAC}` (e.g., `ESP32-CAM-A1B2`)
+- AP IP: 192.168.4.1 (unprotected, no password)
+- Both modes accessible simultaneously (web UI on both networks)
+
 **Raspberry Pi → Server** ([capture-upload-image.sh](RasPiCam/capture-upload-image.sh)):
 ```bash
 libcamera-jpeg -o - | curl -X POST \
@@ -111,6 +118,8 @@ libcamera-jpeg -o - | curl -X POST \
 
 ## Recent Implementations
 
+**WiFi AP+STA Fallback Mode** (2026-03): Automatic WiFi recovery and configuration resilience. On boot failure, ESP32 creates unprotected AP (`ESP32-CAM-{last4MAC}`) at 192.168.4.1 while continuing STA connection attempts. Web UI includes live WiFi credential testing (`/config/test` endpoint) before save, automatic reboot on successful WiFi change, and visual countdown. Timer wake implements 5-retry logic at 5-minute intervals before sleeping until next capture. RTC memory tracks retry count across deep sleep. Status endpoint returns both AP and STA connection details. See [main.cpp](EspCamPicPusher/src/main.cpp) `setupWiFiAPSTA()`, [SleepManager](EspCamPicPusher/lib/SleepManager/) retry tracking, [WebConfigServer](EspCamPicPusher/lib/WebConfigServer/) test endpoint.
+
 **Path-Agnostic Installation** (see [PATH_AGNOSTIC_IMPLEMENTATION.md](WebCamPics/AI/Reports/PATH_AGNOSTIC_IMPLEMENTATION.md)): Auto-detects installation path. All PHP files updated to use `baseUrl()` instead of hardcoded paths.
 
 **Deep Sleep + Web Config v2.0** (see [IMPLEMENTATION_SUMMARY.md](EspCamPicPusher/AI/Reports/IMPLEMENTATION_SUMMARY.md)): 4 new library components (~2,575 lines), state machine architecture, 99% power reduction, activity-based timeout with schedule awareness.
@@ -125,3 +134,6 @@ libcamera-jpeg -o - | curl -X POST \
 - 3-state camera visibility
 - Legacy API backward compatibility maintained
 - RTC memory for persistent data across sleeps
+- WiFi AP+STA fallback mode on boot failure
+- Live WiFi credential testing before save
+- Timer wake retry logic (5 attempts at 5-min intervals)
