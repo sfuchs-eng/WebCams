@@ -139,7 +139,9 @@ void WebConfigServer::handleGetConfig(AsyncWebServerRequest* request) {
 void WebConfigServer::handlePostConfig(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
     // Check authentication if password is set
     if (!checkAuthentication(request)) {
-        request->send(401, "application/json", "{\"success\":false,\"message\":\"Authentication required\"}");
+        AsyncWebServerResponse* response = request->beginResponse(401, "application/json", "{\"success\":false,\"message\":\"Authentication required\"}");
+        response->addHeader("WWW-Authenticate", "Basic realm=\"EspCamPicPusher\"");
+        request->send(response);
         return;
     }
     
@@ -280,7 +282,10 @@ void WebConfigServer::handleAuthCheck(AsyncWebServerRequest* request) {
     if (checkAuthentication(request)) {
         request->send(200, "application/json", "{\"authenticated\":true,\"required\":true}");
     } else {
-        request->send(401, "application/json", "{\"authenticated\":false,\"required\":true}");
+        // Send 401 with WWW-Authenticate header to trigger browser login prompt
+        AsyncWebServerResponse* response = request->beginResponse(401, "application/json", "{\"authenticated\":false,\"required\":true}");
+        response->addHeader("WWW-Authenticate", "Basic realm=\"EspCamPicPusher\"");
+        request->send(response);
     }
 }
 
@@ -652,16 +657,23 @@ String WebConfigServer::generateHtmlPage() {
             const authWarning = document.getElementById('authWarning');
             
             if (authRequired) {
-                // Try a test request to see if we're authenticated
-                fetch('/auth-check')
+                // Make request to auth-check endpoint which will trigger browser login if not authenticated
+                fetch('/auth-check', {
+                    credentials: 'include'  // Include credentials if cached
+                })
                     .then(r => {
-                        isAuthenticated = r.ok;
-                        if (!isAuthenticated) {
-                            saveBtn.style.display = 'none';
-                            authWarning.style.display = 'block';
-                        } else {
+                        if (r.ok) {
+                            // Successfully authenticated
+                            isAuthenticated = true;
                             saveBtn.style.display = '';
                             authWarning.style.display = 'none';
+                        } else if (r.status === 401) {
+                            // Not authenticated - browser should have shown prompt
+                            // User either cancelled or entered wrong credentials
+                            isAuthenticated = false;
+                            saveBtn.style.display = 'none';
+                            authWarning.style.display = 'block';
+                            authWarning.innerHTML = 'Authentication required. <button class="btn btn-small btn-primary" onclick="triggerLogin()" style="margin-left: 10px;">Login</button>';
                         }
                     })
                     .catch(() => {
@@ -675,6 +687,26 @@ String WebConfigServer::generateHtmlPage() {
                 saveBtn.style.display = '';
                 authWarning.style.display = 'none';
             }
+        }
+        
+        function triggerLogin() {
+            // Make a request to auth-check which will trigger the browser's login prompt
+            fetch('/auth-check', {
+                credentials: 'include'
+            })
+                .then(r => {
+                    if (r.ok) {
+                        // Authentication successful
+                        showMessage('\u2713 Authenticated successfully!');
+                        checkAuthStatus();
+                    } else {
+                        // User cancelled or wrong credentials
+                        showMessage('\u274c Authentication failed or cancelled', true);
+                    }
+                })
+                .catch(err => {
+                    showMessage('\u274c Authentication error: ' + err, true);
+                });
         }
 
         function saveConfig() {
@@ -695,6 +727,7 @@ String WebConfigServer::generateHtmlPage() {
             fetch('/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
                 body: JSON.stringify(config)
             })
             .then(r => {
