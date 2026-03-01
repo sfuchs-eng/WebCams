@@ -55,12 +55,16 @@ check_connectivity() {
 capture_and_upload() {
     local attempt=1
     
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Starting capture and upload process"
+    echo "Camera: ${CAM}"
+    echo "Post Handler: ${POSTHANDLER}"
+
     while [ $attempt -le $MAX_RETRIES ]; do
         echo "$(date '+%Y-%m-%d %H:%M:%S') - Attempt $attempt/$MAX_RETRIES"
         
         # Check connectivity first
         if ! check_connectivity; then
-            echo "No network connectivity, waiting..."
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - No network connectivity, waiting..."
             sleep $RETRY_DELAY
             ((attempt++))
             continue
@@ -85,7 +89,7 @@ capture_and_upload() {
             return 0
         fi
         
-        echo "Upload failed, waiting before retry..."
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Upload failed, waiting before retry..."
         sleep $RETRY_DELAY
         ((attempt++))
     done
@@ -95,7 +99,7 @@ capture_and_upload() {
 }
 
 # Main execution
-echo 'Capturing and transmitting image...'
+echo "$(date '+%Y-%m-%d %H:%M:%S') - Capturing and transmitting image..."
 capture_and_upload
 
 ## Example for scaling, rotating and adding a label to the image on camera side. Requires ImageMagick's "convert" tool.
