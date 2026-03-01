@@ -6,3 +6,6 @@
 
 # WiFi credentials (keep template only)
 include/wifi_credentials.h
+
+# OTA server credentials (keep template only)
+.ota-credentials

@@ -9,6 +9,8 @@ header('Content-Type: application/json');
 require_once __DIR__ . '/lib/auth.php';
 require_once __DIR__ . '/lib/storage.php';
 require_once __DIR__ . '/lib/image.php';
+require_once __DIR__ . '/lib/ota.php';
+require_once __DIR__ . '/lib/path.php';
 
 // Only accept POST requests
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -97,15 +99,43 @@ if (isset($_POST['auth']) && isset($_POST['cam']) && isset($_FILES['pic'])) {
     );
     file_put_contents(__DIR__ . '/logs/upload.log', $logEntry, FILE_APPEND);
     
-    // Return success response (JSON format)
-    http_response_code(200);
-    echo json_encode([
+    // Update firmware version if provided
+    $firmwareVersion = $_SERVER['HTTP_X_FIRMWARE_VERSION'] ?? null;
+    if ($firmwareVersion) {
+        updateCameraFirmwareVersion($deviceId, $firmwareVersion);
+    }
+    
+    // Build success response
+    $response = [
         'success' => true,
         'device_id' => $deviceId,
         'timestamp' => $timestamp ?? date('Y-m-d H:i:s'),
         'size' => $imageSize,
         'filename' => basename($processedPath)
-    ]);
+    ];
+    
+    // Check for OTA schedule
+    $otaInfo = getOtaSchedule($deviceId);
+    if ($otaInfo) {
+        $response['ota'] = [
+            'available' => true,
+            'firmware_file' => $otaInfo['filename'],
+            'firmware_version' => $otaInfo['version'],
+            'download_url' => baseUrl('ota-download.php?file=' . urlencode($otaInfo['filename'])),
+            'size' => $otaInfo['size'],
+            'sha256' => $otaInfo['sha256'],
+            'mandatory' => false
+        ];
+        
+        // Update OTA status to "pending"
+        updateOtaStatus($deviceId, 'pending', null, null);
+    } else {
+        $response['ota'] = ['available' => false];
+    }
+    
+    // Return success response (JSON format)
+    http_response_code(200);
+    echo json_encode($response);
     exit;
 }
 
@@ -186,12 +216,40 @@ $logEntry = sprintf(
 );
 file_put_contents(__DIR__ . '/logs/upload.log', $logEntry, FILE_APPEND);
 
-// Return success response
-http_response_code(200);
-echo json_encode([
+// Update firmware version if provided
+$firmwareVersion = $_SERVER['HTTP_X_FIRMWARE_VERSION'] ?? null;
+if ($firmwareVersion) {
+    updateCameraFirmwareVersion($deviceId, $firmwareVersion);
+}
+
+// Build success response
+$response = [
     'success' => true,
     'device_id' => $deviceId,
     'timestamp' => $timestamp ?? date('Y-m-d H:i:s'),
     'size' => $imageSize,
     'filename' => basename($processedPath)
-]);
+];
+
+// Check for OTA schedule
+$otaInfo = getOtaSchedule($deviceId);
+if ($otaInfo) {
+    $response['ota'] = [
+        'available' => true,
+        'firmware_file' => $otaInfo['filename'],
+        'firmware_version' => $otaInfo['version'],
+        'download_url' => baseUrl('ota-download.php?file=' . urlencode($otaInfo['filename'])),
+        'size' => $otaInfo['size'],
+        'sha256' => $otaInfo['sha256'],
+        'mandatory' => false
+    ];
+    
+    // Update OTA status to "pending"
+    updateOtaStatus($deviceId, 'pending', null, null);
+} else {
+    $response['ota'] = ['available' => false];
+}
+
+// Return success response
+http_response_code(200);
+echo json_encode($response);

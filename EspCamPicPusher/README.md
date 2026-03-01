@@ -4,6 +4,13 @@ This project is a Seeeduino XIAO ESP32S3 Sense application that captures images 
 
 ## Features
 
+- **OTA Firmware Updates**: Over-the-air firmware updates via WebCamPics server
+  - Server-side scheduling with admin panel controls
+  - Dual partition safety with automatic rollback on failure
+  - SHA256 integrity verification during download
+  - Mode-aware updates (CONFIG/WAIT only, deferred during CAPTURE)
+  - Automated build and upload script for developers
+  - Automatic confirmation and status reporting
 - **WiFi AP+STA Fallback Mode**: Automatic recovery from WiFi configuration issues
   - On boot with invalid WiFi: Creates unprotected AP `ESP32-CAM-XXXX` at `192.168.4.1`
   - Runs simultaneous AP+STA mode for seamless configuration updates
@@ -88,7 +95,7 @@ const char* WIFI_PASSWORD = "YourWiFiPassword";
 Edit `include/auth_token.h` with default server settings:
 
 ```cpp
-#define SERVER_URL "https://your-server.com/api/upload"
+#define SERVER_URL "https://your-server.com/cams/upload.php"
 #define AUTH_TOKEN "your_secret_token_here"
 ```
 
@@ -145,6 +152,40 @@ pio device monitor
 ```
 
 Or use the PlatformIO buttons in VS Code.
+
+### 5. OTA Firmware Updates
+
+The project supports **Over-The-Air (OTA) firmware updates** via the WebCamPics server, enabling remote updates without physical access to devices.
+
+#### Quick Start
+
+1. **Set up credentials** (first time only):
+   ```bash
+   cp .ota-credentials.template .ota-credentials
+   nano .ota-credentials  # Edit with your server details
+   ```
+
+2. **Build and upload firmware**:
+   ```bash
+   ./build-and-upload-ota.sh
+   ```
+
+3. **Schedule OTA update** via the WebCamPics admin panel for target cameras
+
+4. **Cameras auto-update** on next image upload, validate the new firmware, and confirm success
+
+#### Features
+
+- **Dual partition safety**: Automatic rollback on failed updates
+- **SHA256 verification**: Integrity checking during download
+- **Mode-aware updates**: OTA only in CONFIG/WAIT modes (deferred during CAPTURE)
+- **Server-side scheduling**: Admin controls which cameras update and when
+- **Automatic confirmation**: Cameras report update status back to server
+
+#### Documentation
+
+- **[OTA_BUILD_UPLOAD.md](OTA_BUILD_UPLOAD.md)** - Build script usage and automation guide
+- **[AI/Specs/OTA_UPDATE_SPECIFICATION.md](AI/Specs/OTA_UPDATE_SPECIFICATION.md)** - Complete OTA architecture and protocol specification
 
 ## Server Endpoint
 
@@ -245,6 +286,11 @@ The project is organized into modular libraries for maintainability:
 - **SleepManager**: Deep sleep control with RTC memory persistence (boot count, NTP sync time, failure counters, WiFi retry count)
 - **WebConfigServer**: Async HTTP server with web UI and REST API (includes WiFi testing endpoint)
 - **CameraMutex**: Thread-safe camera access wrapper using FreeRTOS semaphores
+- **OTAManager**: Over-the-air firmware updates using ESP-IDF OTA APIs
+  - Dual partition management (app0/app1)
+  - Streaming download with SHA256 validation (mbedtls)
+  - Automatic rollback on validation failure
+  - Server confirmation protocol
 
 ### Thread Safety
 
@@ -325,6 +371,8 @@ The device provides detailed logging at 115200 baud over USB serial, including:
 
 ## Additional Documentation
 
+- **[OTA_BUILD_UPLOAD.md](OTA_BUILD_UPLOAD.md)** - OTA firmware build and upload automation guide
+- **[AI/Specs/OTA_UPDATE_SPECIFICATION.md](AI/Specs/OTA_UPDATE_SPECIFICATION.md)** - Complete OTA system architecture and protocol specification
 - **[IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md)** - Comprehensive technical documentation, architecture details, and troubleshooting
 - **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Quick reference of implementation details
 

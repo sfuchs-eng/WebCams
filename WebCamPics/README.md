@@ -8,6 +8,12 @@ The push approach allows for sporadic image uploads out of private IP networks w
 
 ## Features
 
+- **OTA Firmware Updates**: Over-the-air firmware distribution and scheduling
+  - Admin uploads firmware binaries (.bin files) via web UI
+  - Schedule OTA updates per camera or for all cameras
+  - SHA256 checksums for firmware integrity
+  - Automatic rollback protection on cameras
+  - Status tracking and confirmation protocol
 - **Image Reception**: Receives JPEG images via HTTP POST with authentication
 - **Image Processing**: 
   - Rotate images (0°, 90°, 180°, 270°)
@@ -175,6 +181,20 @@ If the admin panel doesn't prompt for authentication:
   - Set rotation angle
   - Configure text overlays
   - Customize font size and color
+  - **Schedule OTA firmware updates**: Select firmware version and schedule update for camera
+
+### OTA Firmware Management
+
+- **Upload Firmware**: Access `http://your-domain.com/webcams/ota-upload.php` (HTTP Basic Auth required)
+  - Upload .bin files with version numbers
+  - Automatic SHA256 checksum generation
+  - View all available firmware versions
+- **Schedule Updates**: In admin panel, select firmware version and click "Schedule OTA Update" for target camera(s)
+- **Monitor Status**: Camera status shows:
+  - `ota_scheduled`: Firmware version waiting to be downloaded
+  - `current_firmware_version`: Currently running version
+  - `ota_last_status`: Last update result (success/failed/rollback)
+  - `ota_last_updated`: Timestamp of last OTA activity
 
 ### Adding New Locations
 
@@ -249,6 +269,90 @@ curl -F "auth=token1" -F "cam=test_cam" -F "pic=@image.jpg" \
 - New camera entries are auto-created in `cameras.json` with status "hidden"
 - Run [test_legacy_upload.sh](test_legacy_upload.sh) to verify legacy interface
 
+### OTA Endpoints
+
+Over-the-air firmware update endpoints for ESP32 cameras.
+
+#### GET /ota-download.php
+
+**Purpose**: Download scheduled firmware updates (camera-only endpoint)
+
+**Authentication**: X-Auth-Token header matching device's auth token
+
+**Headers**:
+- `X-Auth-Token: {AUTH_TOKEN}` (required)
+- `X-Device-ID: {MAC_ADDRESS}` (required)
+
+**Response Headers** (on success):
+- `X-Firmware-SHA256: {checksum}`
+- `X-Firmware-Version: {version}`
+- `Content-Type: application/octet-stream`
+- `Content-Length: {size_in_bytes}`
+
+**Response Body**: Binary firmware file (.bin)
+
+**Error Responses**:
+- `401 Unauthorized`: Invalid authentication
+- `403 Forbidden`: No OTA scheduled for this device
+- `404 Not Found`: Firmware file missing
+
+#### POST /ota-confirm.php
+
+**Purpose**: Confirm OTA update success or failure (camera-only endpoint)
+
+**Authentication**: X-Auth-Token header
+
+**Headers**:
+- `X-Auth-Token: {AUTH_TOKEN}` (required)
+- `X-Device-ID: {MAC_ADDRESS}` (required)
+- `Content-Type: application/json`
+
+**Body**:
+```json
+{
+  "status": "success",             // "success", "failed", or "rollback"
+  "firmware_version": "1.1.0",     // Current running version
+  "error": "Optional error message"
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "OTA status updated",
+  "device_id": "AA:BB:CC:DD:EE:FF"
+}
+```
+
+#### POST /ota-upload.php
+
+**Purpose**: Upload firmware binaries (admin-only endpoint)
+
+**Authentication**: HTTP Basic Auth (same as admin.php)
+
+**Content-Type**: `multipart/form-data`
+
+**Parameters**:
+- `firmware` (file, required): Binary firmware file (.bin)
+- `version` (string, required): Firmware version (e.g., "1.1.0")
+- `description` (string, optional): Update description
+
+**Response**:
+```json
+{
+  "success": true,
+  "filename": "firmware_v1.1.0.bin",
+  "sha256": "abc123...",
+  "size": 1048576,
+  "version": "1.1.0"
+}
+```
+
+**Access**: Open `http://your-domain.com/webcams/ota-upload.php` in browser for web UI
+
+**Note**: Admin panel (`admin.php`) also includes OTA scheduling controls per camera.
+
 ### Testing
 
 **Test current interface**:
@@ -269,13 +373,20 @@ WebCamPics/
 ├── location.php        # Location/camera history view
 ├── admin.php           # Camera administration
 ├── upload.php          # Image upload endpoint
+├── ota-upload.php      # Firmware upload (admin)
+├── ota-download.php    # Firmware download (cameras)
+├── ota-confirm.php     # OTA status confirmation (cameras)
 ├── config/
 │   ├── config.json     # Main configuration
 │   └── cameras.json    # Per-camera settings
+├── firmware/           # OTA firmware storage (auto-created)
+│   ├── checksums.json  # Firmware metadata and SHA256 checksums
+│   └── *.bin           # Binary firmware files
 ├── lib/
 │   ├── auth.php        # Authentication functions
 │   ├── storage.php     # File storage functions
-│   └── image.php       # Image processing functions
+│   ├── image.php       # Image processing functions
+│   └── ota.php         # OTA management functions
 ├── assets/
 │   └── style.css       # Responsive styles
 ├── images/             # Stored images (auto-created)
@@ -335,4 +446,8 @@ tail -f /var/www/html/webcams/logs/upload.log
 
 ## Support
 
-For issues related to the ESP32-CAM firmware, see the EspCamPicPusher project.
+For issues related to the ESP32-CAM firmware and OTA updates, see the [EspCamPicPusher project](../EspCamPicPusher/).
+
+For complete OTA system documentation, see:
+- **[EspCamPicPusher/AI/Specs/OTA_UPDATE_SPECIFICATION.md](../EspCamPicPusher/AI/Specs/OTA_UPDATE_SPECIFICATION.md)** - Complete OTA architecture and protocol specification
+- **[EspCamPicPusher/OTA_BUILD_UPLOAD.md](../EspCamPicPusher/OTA_BUILD_UPLOAD.md)** - Automated firmware build and upload guide

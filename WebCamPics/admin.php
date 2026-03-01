@@ -8,6 +8,7 @@ require_once __DIR__ . '/lib/auth.php';
 require_once __DIR__ . '/lib/storage.php';
 require_once __DIR__ . '/lib/path.php';
 require_once __DIR__ . '/lib/fab-menu.php';
+require_once __DIR__ . '/lib/ota.php';
 
 $config = loadConfig();
 $message = '';
@@ -26,6 +27,22 @@ if (isset($_GET['msg'])) {
             break;
         case 'purged':
             $message = 'Camera images purged successfully!';
+            $messageType = 'success';
+            break;
+        case 'ota_scheduled':
+            $message = 'OTA update scheduled successfully!';
+            $messageType = 'success';
+            break;
+        case 'ota_cleared':
+            $message = 'OTA schedule cleared!';
+            $messageType = 'success';
+            break;
+        case 'ota_error':
+            $message = 'Failed to schedule OTA update.';
+            $messageType = 'error';
+            break;
+        case 'ota_retry_reset':
+            $message = 'OTA retry counter reset successfully!';
             $messageType = 'success';
             break;
     }
@@ -158,6 +175,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: ' . baseUrl('admin.php?msg=purged'));
                 exit;
                 break;
+                
+            case 'schedule_ota':
+                $identifier = $_POST['mac'];
+                $firmwareFile = $_POST['firmware_file'] ?? '';
+                
+                if (empty($firmwareFile)) {
+                    $success = clearOtaSchedule($identifier);
+                    $msg = $success ? 'ota_cleared' : 'ota_error';
+                } else {
+                    $success = scheduleOtaUpdate($identifier, $firmwareFile);
+                    $msg = $success ? 'ota_scheduled' : 'ota_error';
+                }
+                
+                // Handle AJAX request
+                if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && 
+                    strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                    header('Content-Type: application/json');
+                    echo json_encode(['success' => $success]);
+                    exit;
+                }
+                
+                header('Location: ' . baseUrl('admin.php?msg=' . $msg));
+                exit;
+                break;
+                
+            case 'reset_ota_retry':
+                $identifier = $_POST['mac'];
+                $success = resetOtaRetryCount($identifier);
+                
+                // Handle AJAX request
+                if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && 
+                    strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                    header('Content-Type: application/json');
+                    echo json_encode(['success' => $success]);
+                    exit;
+                }
+                
+                $msg = $success ? 'ota_retry_reset' : 'ota_error';
+                header('Location: ' . baseUrl('admin.php?msg=' . $msg));
+                exit;
+                break;
         }
     }
 }
@@ -191,7 +249,10 @@ foreach ($camerasConfig as $key => $cameraData) {
     <main class="container">
         <div class="page-title" style="display: flex; justify-content: space-between; align-items: center;">
             <h1>⚙️ Camera Administration</h1>
-            <a href="<?php echo baseUrl('index.php'); ?>" class="home-button" style="font-size: 2em; text-decoration: none;" title="Back to Home">&#x1F3E0;</a>
+            <div style="display: flex; gap: 15px; align-items: center;">
+                <a href="<?php echo baseUrl('ota-upload.php'); ?>" class="btn" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-size: 0.9em;" title="Manage Firmware">🔄 Firmware</a>
+                <a href="<?php echo baseUrl('index.php'); ?>" class="home-button" style="font-size: 2em; text-decoration: none;" title="Back to Home">&#x1F3E0;</a>
+            </div>
         </div>
         
         <?php if ($message): ?>
@@ -340,6 +401,39 @@ foreach ($camerasConfig as $key => $cameraData) {
                         </label>
                     </div>
                     
+                    <fieldset class="ota-management" style="margin-top: 20px; padding: 15px; border: 2px solid #007bff; border-radius: 5px;">
+                        <legend style="font-weight: bold; color: #007bff;">🔄 OTA Firmware Update</legend>
+                        
+                        <div class="form-group">
+                            <label>Current Firmware:</label>
+                            <p id="edit_firmware_version" style="margin: 5px 0; font-family: monospace;">Unknown</p>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Update Status:</label>
+                            <p id="edit_ota_status" style="margin: 5px 0;">No updates scheduled</p>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_ota_firmware">Schedule Update:</label>
+                     <select id="edit_ota_firmware" name="ota_firmware">
+                                <option value="">-- No update scheduled --</option>
+                                <?php 
+                                $availableFirmware = getAvailableFirmware();
+                                foreach ($availableFirmware as $fw): 
+                                    $size = number_format($fw['size'] / 1024 / 1024, 2);
+                                ?>
+                                    <option value="<?php echo htmlspecialchars($fw['filename']); ?>">
+                                        v<?php echo htmlspecialchars($fw['version']); ?> (<?php echo $size; ?> MB)
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <small style="display: block; margin-top: 5px; color: #666;">Camera will download and install on next image upload</small>
+                        </div>
+                        
+                        <button type="button" class="btn" onclick="clearOtaSchedule()" style="background: #dc3545; color: white;">Clear Scheduled Update</button>
+                    </fieldset>
+                    
                     <div class="form-actions">
                         <button type="submit" class="btn btn-primary">Save Changes</button>
                         <button type="button" class="btn" onclick="closeEditModal()">Cancel</button>
@@ -371,6 +465,39 @@ foreach ($camerasConfig as $key => $cameraData) {
             document.getElementById('edit_font_size').value = camera.font_size;
             document.getElementById('edit_font_color').value = camera.font_color;
             document.getElementById('edit_font_outline').checked = camera.font_outline;
+            
+            // Populate OTA info
+            document.getElementById('edit_firmware_version').textContent = camera.firmware_version || 'Unknown';
+            document.getElementById('edit_ota_firmware').value = camera.ota_scheduled || '';
+            
+            // Update OTA status display
+            let statusHtml = 'No updates scheduled';
+            const retryCount = camera.ota_retry_count || 0;
+            
+            if (camera.ota_scheduled) {
+                statusHtml = '⏳ Pending: ' + camera.ota_scheduled;
+                if (retryCount > 0) {
+                    statusHtml += ' <span style="color: #ff9800;">(Attempt ' + (retryCount + 1) + '/2)</span>';
+                }
+                if (camera.ota_last_status === 'failed' && camera.ota_last_error) {
+                    statusHtml += '<br><span style="color: #dc3545;">❌ Last attempt failed: ' + camera.ota_last_error + '</span>';
+                }
+            } else if (retryCount >= 2 && camera.ota_last_status === 'failed') {
+                statusHtml = '<span style="color: #dc3545;">🚫 Max retries reached (' + retryCount + '/2)</span>';
+                if (camera.ota_last_error) {
+                    statusHtml += '<br>' + camera.ota_last_error;
+                }
+                statusHtml += '<br><button type="button" class="btn" onclick="resetOtaRetryCount()" style="margin-top: 10px; background: #ff9800; color: white; font-size: 0.85em;">Reset Retry Counter</button>';
+            } else if (camera.ota_last_status === 'success' && camera.ota_last_attempt) {
+                const attemptDate = new Date(camera.ota_last_attempt);
+                statusHtml = '✅ Last update successful (' + attemptDate.toLocaleString() + ')';
+            } else if (camera.ota_last_status === 'rollback') {
+                statusHtml = '⚠️ Last update rolled back';
+                if (camera.ota_last_error) {
+                    statusHtml += ': ' + camera.ota_last_error;
+                }
+            }
+            document.getElementById('edit_ota_status').innerHTML = statusHtml;
             
             // Show modal
             document.getElementById('editModal').classList.add('active');
@@ -430,6 +557,114 @@ foreach ($camerasConfig as $key => $cameraData) {
                 alert('Failed to purge images: ' + error);
             });
         }
+        
+        // Clear OTA schedule
+        function clearOtaSchedule() {
+            const mac = document.getElementById('edit_mac').value;
+            
+            if (!confirm('Clear the scheduled OTA update for this camera?')) {
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('action', 'schedule_ota');
+            formData.append('mac', mac);
+            formData.append('firmware_file', '');  // Empty = clear schedule
+            
+            fetch(window.location.href, {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('OTA schedule cleared successfully!');
+                    location.reload();
+                } else {
+                    alert('Failed to clear OTA schedule');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Failed to clear OTA schedule: ' + error);
+            });
+        }
+        
+        // Reset OTA retry counter
+        function resetOtaRetryCount() {
+            const mac = document.getElementById('edit_mac').value;
+            
+            if (!confirm('Reset the OTA retry counter for this camera? This will allow reattempting the failed firmware update.')) {
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('action', 'reset_ota_retry');
+            formData.append('mac', mac);
+            
+            fetch(window.location.href, {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Retry counter reset successfully! You can now schedule a new OTA update.');
+                    location.reload();
+                } else {
+                    alert('Failed to reset retry counter');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Failed to reset retry counter: ' + error);
+            });
+        }
+        
+        // Intercept form submission to handle OTA scheduling
+        document.getElementById('editForm').addEventListener('submit', function(e) {
+            const mac = document.getElementById('edit_mac').value;
+            const otaFirmware = document.getElementById('edit_ota_firmware').value;
+            
+            // Schedule OTA if firmware selected and different from current
+            const camera = cameraData[mac];
+            if (camera && otaFirmware && otaFirmware !== (camera.ota_scheduled || '')) {
+                e.preventDefault();  // Prevent default submission
+                
+                const formData = new FormData();
+                formData.append('action', 'schedule_ota');
+                formData.append('mac', mac);
+                formData.append('firmware_file', otaFirmware);
+                
+                fetch(window.location.href, {
+                    method: 'POST',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Now submit the main form
+                        this.submit();
+                    } else {
+                        alert('Failed to schedule OTA update');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Failed to schedule OTA: ' + error);
+                });
+            }
+            // Otherwise, let form submit normally
+        });
     </script>
 </body>
 </html>

@@ -11,6 +11,7 @@
 #include "WebConfigServer.h"
 #include "CameraMutex.h"
 #include "CameraCapture.h"
+#include "OTAManager.h"
 
 // ============================================================================
 // Global Variables
@@ -21,6 +22,7 @@ ConfigManager configManager;
 ScheduleManager scheduleManager;
 SleepManager sleepManager;
 WebConfigServer* webServer = nullptr;
+OTAManager otaManager;
 
 // Operating mode
 enum OperatingMode {
@@ -34,6 +36,8 @@ OperatingMode currentMode = MODE_CONFIG;
 unsigned long lastNtpUpdate = 0;
 bool cameraInitialized = false;
 bool isApMode = false;  // Track if in AP+STA mode
+bool otaValidationPending = false;
+String pendingOtaFirmwareFile = "";
 
 // ============================================================================
 // Function Declarations
@@ -57,6 +61,8 @@ void runWaitMode();
 void enterSleepMode();
 void buildScheduleFromConfig();
 bool shouldEnterSleepMode();
+void handleOtaUpdate(const String& response);
+void validateOtaUpdate();
 
 // ============================================================================
 // Setup Function
@@ -109,6 +115,18 @@ void setup() {
             setupTime();
         } else {
             Serial.println("Skipping NTP setup (no WiFi connection)");
+        }
+        
+        // Initialize OTA manager
+        if (wifiConnected || isWiFiConnected()) {
+            otaManager.begin();
+            
+            // Check if this is first boot after OTA
+            if (otaManager.isFirstBootAfterOta()) {
+                Serial.println("\n[OTA] First boot after update detected");
+                otaValidationPending = true;
+                // Validation happens after first successful capture
+            }
         }
         
         // Start web server
@@ -180,6 +198,17 @@ void setup() {
             Serial.println("Using RTC time (NTP sync not required)");
         }
         
+        // Initialize OTA manager
+        otaManager.begin();
+        
+        // Check if this is first boot after OTA - force validation capture
+        if (otaManager.isFirstBootAfterOta()) {
+            Serial.println("\n[OTA] First boot after update detected");
+            Serial.println("[OTA] Forcing validation capture even if no timeslot due");
+            otaValidationPending = true;
+            // Validation will occur in runCaptureMode() after successful upload
+        }
+        
     } else {
         // Unknown wake - enter config mode to be safe
         Serial.println("=== Unknown wake reason - entering CONFIG MODE ===");
@@ -200,6 +229,18 @@ void setup() {
             setupTime();
         } else {
             Serial.println("Skipping NTP setup (no WiFi connection)");
+        }
+        
+        // Initialize OTA manager
+        if (wifiConnected || isWiFiConnected()) {
+            otaManager.begin();
+            
+            // Check if this is first boot after OTA
+            if (otaManager.isFirstBootAfterOta()) {
+                Serial.println("\n[OTA] First boot after update detected");
+                otaValidationPending = true;
+                // Validation happens after first successful capture
+            }
         }
         
         // Start web server
@@ -772,6 +813,7 @@ bool captureAndPostImage() {
     http.addHeader("Content-Type", "image/jpeg");
     http.addHeader("X-Auth-Token", configManager.getAuthToken());
     http.addHeader("X-Device-ID", WiFi.macAddress());
+    http.addHeader("X-Firmware-Version", otaManager.getFirmwareVersion());
     
     // Get formatted timestamp
     struct tm timeinfo;
@@ -790,14 +832,34 @@ bool captureAndPostImage() {
     
     // Check response
     bool success = false;
+    String response = "";
     if (httpResponseCode > 0) {
         Serial.printf("HTTP Response code: %d\n", httpResponseCode);
-        String response = http.getString();
+        response = http.getString();
         Serial.println("Response: " + response);
         
         if (httpResponseCode >= 200 && httpResponseCode < 300) {
             Serial.println("✓ Image uploaded successfully!");
             success = true;
+            
+            // Check for OTA available
+            if (otaManager.isOtaAvailable(response)) {
+                Serial.println("\n[OTA] Update available in response");
+                
+                // Only proceed with OTA in CONFIG or WAIT modes
+                // Never during CAPTURE mode (would delay critical wake cycle)
+                if (currentMode == MODE_CONFIG || currentMode == MODE_WAIT) {
+                    handleOtaUpdate(response);
+                } else {
+                    Serial.println("[OTA] Deferring OTA - not in suitable mode");
+                    // OTA will be picked up on next upload in suitable mode
+                }
+            }
+            
+            // If validation pending and capture successful, confirm OTA
+            if (otaValidationPending) {
+                validateOtaUpdate();
+            }
         } else {
             Serial.println("✗ Upload failed with HTTP error");
         }
@@ -824,4 +886,67 @@ void blinkLED(int times, int delayMs) {
         delay(delayMs);
     }
     #endif
+}
+
+// ============================================================================
+// OTA Update Functions
+// ============================================================================
+
+void handleOtaUpdate(const String& response) {
+    Serial.println("\n======================================");
+    Serial.println("[OTA] Processing OTA Update");
+    Serial.println("======================================");
+    
+    OtaUpdateInfo otaInfo = otaManager.parseOtaInfo(response);
+    
+    if (!otaInfo.available) {
+        Serial.println("[OTA] No update available");
+        return;
+    }
+    
+    // Store firmware file for validation after reboot
+    pendingOtaFirmwareFile = otaInfo.firmwareFile;
+    
+    // Perform OTA update (blocking operation)
+    OtaResult result = otaManager.performUpdate(otaInfo, 
+                                                configManager.getAuthToken(),
+                                                WiFi.macAddress());
+    
+    if (result == OTA_SUCCESS) {
+        // Device will reboot, never reaches here
+        Serial.println("[OTA] Update applied, rebooting...");
+    } else {
+        // OTA failed, send error confirmation
+        String errorMsg = "OTA failed: " + otaManager.getLastError();
+        Serial.println(errorMsg);
+        
+        otaManager.sendConfirmation(configManager.getServerUrl(),
+                                   configManager.getAuthToken(),
+                                   WiFi.macAddress(),
+                                   false,
+                                   otaInfo.firmwareFile,
+                                   errorMsg);
+    }
+}
+
+void validateOtaUpdate() {
+    Serial.println("\n[OTA] Validating update after first successful capture");
+    
+    if (otaManager.confirmUpdate()) {
+        // Mark partition as valid
+        Serial.println("[OTA] Update validated successfully");
+        
+        // Send success confirmation to server
+        otaManager.sendConfirmation(configManager.getServerUrl(),
+                                   configManager.getAuthToken(),
+                                   WiFi.macAddress(),
+                                   true,
+                                   pendingOtaFirmwareFile,
+                                   "");
+        
+        otaValidationPending = false;
+        pendingOtaFirmwareFile = "";
+    } else {
+        Serial.println("[OTA] Validation failed - rollback will occur on next reboot");
+    }
 }
