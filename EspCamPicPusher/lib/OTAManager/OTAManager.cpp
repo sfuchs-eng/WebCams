@@ -117,7 +117,8 @@ bool OTAManager::isOtaAvailable(const String& jsonResponse) {
     return info.available;
 }
 
-OtaResult OTAManager::performUpdate(const OtaUpdateInfo& info, const String& authToken, const String& deviceId) {
+OtaResult OTAManager::performUpdate(const OtaUpdateInfo& info, const String& authToken, 
+                                    const String& deviceId, const String& serverUrl) {
     Serial.println("\n======================================");
     Serial.println("[OTA] Starting OTA Update");
     Serial.println("======================================");
@@ -134,7 +135,7 @@ OtaResult OTAManager::performUpdate(const OtaUpdateInfo& info, const String& aut
     // Download and write firmware
     _state = OTA_DOWNLOADING;
     OtaResult result = downloadFirmware(info.downloadUrl, authToken, deviceId, 
-                                        info.size, info.sha256);
+                                        info.size, info.sha256, serverUrl);
     
     if (result != OTA_SUCCESS) {
         return result;
@@ -152,23 +153,111 @@ OtaResult OTAManager::performUpdate(const OtaUpdateInfo& info, const String& aut
     return OTA_SUCCESS;
 }
 
+String OTAManager::buildFullUrl(const String& baseUrl, const String& path) {
+    // If path is already a full URL (starts with http:// or https://), return as-is
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+        return path;
+    }
+    
+    // baseUrl can be:
+    //   - Domain root: "https://server.com"
+    //   - With path:   "https://server.com/cams"
+    // Append the endpoint path, handling trailing/leading slashes
+    String url = baseUrl;
+    
+    // Ensure no double slashes
+    if (url.endsWith("/") && path.startsWith("/")) {
+        return url.substring(0, url.length() - 1) + path;
+    } else if (!url.endsWith("/") && !path.startsWith("/")) {
+        return url + "/" + path;
+    } else {
+        return url + path;
+    }
+}
+
 OtaResult OTAManager::downloadFirmware(const String& url, const String& authToken, 
                                        const String& deviceId, size_t expectedSize, 
-                                       const String& expectedSha256) {
-    Serial.printf("[OTA] Downloading from: %s\n", url.c_str());
+                                       const String& expectedSha256, const String& serverUrl) {
+    Serial.printf("[OTA] Download URL from server: %s\n", url.c_str());
+    
+    // Build full URL from server URL and download path
+    String fullUrl = buildFullUrl(serverUrl, url);
+    
+    Serial.printf("[OTA] Downloading from: %s\n", fullUrl.c_str());
+    Serial.printf("[OTA] Expected size: %d bytes\n", expectedSize);
+    Serial.printf("[OTA] Expected SHA256: %s\n", expectedSha256.c_str());
+    
+    // Check WiFi before attempting download
+    if (WiFi.status() != WL_CONNECTED) {
+        setError("WiFi not connected");
+        Serial.println("[OTA] ERROR: WiFi disconnected before download");
+        return OTA_ERROR_DOWNLOAD;
+    }
     
     WiFiClientSecure client;
     client.setInsecure();  // TODO: Add certificate validation in production
     
     HTTPClient http;
-    http.begin(client, url);
+    Serial.println("[OTA] Initializing HTTP client...");
+    
+    if (!http.begin(client, fullUrl)) {
+        setError("HTTP client begin() failed");
+        Serial.println("[OTA] ERROR: http.begin() failed - invalid URL or client error");
+        Serial.printf("[OTA] URL was: %s\n", fullUrl.c_str());
+        return OTA_ERROR_DOWNLOAD;
+    }
+    
+    Serial.println("[OTA] Adding headers...");
+    Serial.println("[OTA] Adding headers...");
     http.addHeader("X-Auth-Token", authToken);
     http.addHeader("X-Device-ID", deviceId);
+    http.setTimeout(30000); // 30 second timeout for large file downloads
     
+    Serial.println("[OTA] Sending GET request...");
     int httpCode = http.GET();
+    
+    Serial.printf("[OTA] HTTP response code: %d\n", httpCode);
+    
+    // Detailed error reporting for HTTP -1
+    if (httpCode < 0) {
+        String errorDetail;
+        switch (httpCode) {
+            case -1:
+                errorDetail = "Connection failed (check network, DNS, or server availability)";
+                break;
+            case -2:
+                errorDetail = "Send header failed";
+                break;
+            case -3:
+                errorDetail = "Send payload failed";
+                break;
+            case -4:
+                errorDetail = "Not connected";
+                break;
+            case -5:
+                errorDetail = "Connection lost";
+                break;
+            case -11:
+                errorDetail = "Read timeout";
+                break;
+            default:
+                errorDetail = "HTTP client error " + String(httpCode);
+        }
+        setError("Download failed: " + errorDetail);
+        Serial.printf("[OTA] ERROR: %s\n", errorDetail.c_str());
+        Serial.printf("[OTA] WiFi status: %d (3=connected)\n", WiFi.status());
+        Serial.printf("[OTA] RSSI: %d dBm\n", WiFi.RSSI());
+        http.end();
+        return OTA_ERROR_DOWNLOAD;
+    }
     
     if (httpCode != HTTP_CODE_OK) {
         setError("Download failed: HTTP " + String(httpCode));
+        Serial.printf("[OTA] ERROR: Server returned HTTP %d\n", httpCode);
+        String response = http.getString();
+        if (response.length() > 0 && response.length() < 500) {
+            Serial.printf("[OTA] Server response: %s\n", response.c_str());
+        }
         http.end();
         return OTA_ERROR_DOWNLOAD;
     }
@@ -298,17 +387,8 @@ bool OTAManager::sendConfirmation(const String& serverUrl, const String& authTok
                                   const String& firmwareFile, const String& errorMessage) {
     Serial.println("[OTA] Sending confirmation to server");
     
-    // Build confirmation URL
-    String confirmUrl = serverUrl;
-    if (!confirmUrl.endsWith("/")) confirmUrl += "/";
-    
-    // Remove any existing filename from URL
-    int lastSlash = confirmUrl.lastIndexOf('/', confirmUrl.length() - 2);
-    if (lastSlash > 0) {
-        confirmUrl = confirmUrl.substring(0, lastSlash + 1);
-    }
-    
-    confirmUrl += "ota-confirm.php";
+    // Build confirmation URL from base URL
+    String confirmUrl = buildFullUrl(serverUrl, "/ota-confirm.php");
     
     Serial.printf("[OTA] Confirmation URL: %s\n", confirmUrl.c_str());
     

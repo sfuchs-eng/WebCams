@@ -79,9 +79,11 @@ public:
      * @param info OTA update information
      * @param authToken Authentication token for download
      * @param deviceId Device identifier
+     * @param serverUrl Server base URL for constructing full download URL
      * @return OtaResult status code
      */
-    OtaResult performUpdate(const OtaUpdateInfo& info, const String& authToken, const String& deviceId);
+    OtaResult performUpdate(const OtaUpdateInfo& info, const String& authToken, 
+                           const String& deviceId, const String& serverUrl);
     
     /**
      * Get current firmware version
@@ -142,12 +144,21 @@ private:
     const esp_partition_t* _updatePartition;
     
     /**
+     * Build full URL from base URL and relative path
+     * Base URL can be domain root or include path component
+     * @param baseUrl Server base URL (e.g., "https://server.com" or "https://server.com/cams")
+     * @param path Relative path (e.g., "/ota-download.php?file=...") or full URL
+     * @return Full URL (e.g., "https://server.com/cams/ota-download.php?file=...")
+     */
+    String buildFullUrl(const String& baseUrl, const String& path);
+    
+    /**
      * Download firmware from URL
      * @return OtaResult status
      */
     OtaResult downloadFirmware(const String& url, const String& authToken, 
                                const String& deviceId, size_t expectedSize, 
-                               const String& expectedSha256);
+                               const String& expectedSha256, const String& serverUrl);
     
     /**
      * Calculate SHA256 of data using mbedtls

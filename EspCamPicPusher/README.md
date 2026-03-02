@@ -95,11 +95,14 @@ const char* WIFI_PASSWORD = "YourWiFiPassword";
 Edit `include/auth_token.h` with default server settings:
 
 ```cpp
-#define SERVER_URL "https://your-server.com/cams/upload.php"
+// Base URL can be domain root or include path:
+//   "https://your-server.com" or "https://your-server.com/cams"
+// Do NOT include endpoint filename (e.g., NOT ".../upload.php")
+#define SERVER_URL "https://your-server.com/cams"
 #define AUTH_TOKEN "your_secret_token_here"
 ```
 
-**Note**: These defaults can be changed at runtime via the web configuration interface.
+**Note**: These defaults can be changed at runtime via the web configuration interface. The base URL should point to the directory containing the API endpoints (`upload.php`, `log.php`, `ota-download.php`, `ota-confirm.php`).
 
 #### 3. Application Settings
 

@@ -825,8 +825,9 @@ bool captureAndPostImage() {
     
     HTTPClient http;
     
-    const char* serverUrl = configManager.getServerUrl();
-    http.begin(client, serverUrl);
+    // Build upload URL from base URL (base URL can include path like /cams)
+    String uploadUrl = String(configManager.getServerUrl()) + "/upload.php";
+    http.begin(client, uploadUrl);
     
     // Set headers
     http.addHeader("Content-Type", "image/jpeg");
@@ -955,7 +956,8 @@ void handleOtaUpdate(const String& response) {
     // Perform OTA update (blocking operation)
     OtaResult result = otaManager.performUpdate(otaInfo, 
                                                 configManager.getAuthToken(),
-                                                WiFi.macAddress());
+                                                WiFi.macAddress(),
+                                                configManager.getServerUrl());
     
     if (result == OTA_SUCCESS) {
         // Device will reboot, never reaches here

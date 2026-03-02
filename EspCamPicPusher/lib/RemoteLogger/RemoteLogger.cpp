@@ -207,12 +207,15 @@ bool RemoteLogger::sendLogs() {
             return false;
         }
         
-        // Build URL
+        // Build log URL from base URL (base URL can include path like /cams)
+        // Ensure proper slash handling between base URL and endpoint
         String url = _serverUrl;
         if (!url.endsWith("/")) {
             url += "/";
         }
         url += "log.php";
+        
+        Serial.printf("[RemoteLogger] Log URL: %s\n", url.c_str());
         
         if (!http->begin(*client, url)) {
             Serial.println("[RemoteLogger] Failed to begin HTTP request");

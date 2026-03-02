@@ -189,7 +189,9 @@ bool ConfigManager::validateConfig() {
         return false;
     }
     
-    // Validate server URL (should start with http:// or https://)
+    // Validate server URL (must start with http:// or https://)
+    // Base URL can include path (e.g., "https://server.com/cams")
+    // but must NOT include endpoint filename (e.g., NOT ".../upload.php")
     if (strlen(config.serverUrl) < 7) {
         Serial.println("Validation failed: Invalid server URL");
         return false;

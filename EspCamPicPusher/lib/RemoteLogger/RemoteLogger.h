@@ -26,7 +26,9 @@ class RemoteLogger {
 public:
     /**
      * Initialize remote logger
-     * @param serverUrl Base server URL (e.g., "https://example.com/webcams")
+     * @param serverUrl Base server URL, can include path component
+     *                  (e.g., "https://example.com/cams" or "https://example.com")
+     *                  Must NOT include endpoint filename (e.g., NOT ".../upload.php")
      * @param authToken Authentication token
      * @param deviceId Device identifier (MAC address)
      */
