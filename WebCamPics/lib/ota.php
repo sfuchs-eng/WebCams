@@ -5,6 +5,7 @@
  */
 
 require_once __DIR__ . '/storage.php';
+require_once __DIR__ . '/logging.php';
 
 /**
  * Get firmware directory path
@@ -273,6 +274,10 @@ function getOtaSchedule(string $deviceId): ?array {
                 $retryCount = $camera['ota_retry_count'] ?? 0;
                 if ($retryCount >= 2) {
                     // Retry limit reached, don't offer OTA anymore
+                    logOta("Retry limit reached for device $deviceId", [
+                        'scheduled_firmware' => $camera['ota_scheduled'],
+                        'retry_count' => $retryCount
+                    ], LOG_LEVEL_WARN);
                     return null;
                 }
                 
@@ -319,7 +324,16 @@ function scheduleOtaUpdate(string $deviceId, string $firmwareFile): bool {
             $cameras[$key]['ota_last_status'] = null;
             $cameras[$key]['ota_last_error'] = null;
             
-            return saveCamerasConfig($cameras);
+            $result = saveCamerasConfig($cameras);
+            if ($result) {
+                $firmwareInfo = getFirmwareInfo($firmwareFile);
+                logOta("OTA scheduled for device $deviceId", [
+                    'firmware_file' => $firmwareFile,
+                    'version' => $firmwareInfo['version'] ?? 'unknown',
+                    'size' => $firmwareInfo['size'] ?? 0
+                ]);
+            }
+            return $result;
         }
     }
     
@@ -346,7 +360,11 @@ function clearOtaSchedule(string $deviceId): bool {
         if ($cameraIdNormalized === $identifierNormalized) {
             $cameras[$key]['ota_scheduled'] = null;
             
-            return saveCamerasConfig($cameras);
+            $result = saveCamerasConfig($cameras);
+            if ($result) {
+                logOta("OTA schedule cleared for device $deviceId");
+            }
+            return $result;
         }
     }
     
@@ -388,16 +406,43 @@ function updateOtaStatus(string $deviceId, string $status, ?string $error = null
                 $cameras[$key]['firmware_version'] = $version;
                 $cameras[$key]['ota_scheduled'] = null;
                 $cameras[$key]['ota_retry_count'] = 0; // Reset counter on success
+                
+                $result = saveCamerasConfig($cameras);
+                if ($result) {
+                    logOta("OTA successful for device $deviceId", [
+                        'new_version' => $version
+                    ]);
+                }
+                return $result;
             }
             
             // Increment retry count on failure
             elseif ($status === 'failed') {
                 $cameras[$key]['ota_retry_count']++;
+                $newRetryCount = $cameras[$key]['ota_retry_count'];
                 
                 // If retry limit reached (>= 2), clear schedule
-                if ($cameras[$key]['ota_retry_count'] >= 2) {
+                if ($newRetryCount >= 2) {
                     $cameras[$key]['ota_scheduled'] = null;
                     $cameras[$key]['ota_last_error'] = ($error ?? '') . ' (Max retries reached - manual intervention required)';
+                    
+                    $result = saveCamerasConfig($cameras);
+                    if ($result) {
+                        logOta("OTA failed for device $deviceId - retry limit reached", [
+                            'retry_count' => $newRetryCount,
+                            'error' => $error
+                        ], LOG_LEVEL_ERROR);
+                    }
+                    return $result;
+                } else {
+                    $result = saveCamerasConfig($cameras);
+                    if ($result) {
+                        logOta("OTA failed for device $deviceId - will retry", [
+                            'retry_count' => $newRetryCount,
+                            'error' => $error
+                        ], LOG_LEVEL_WARN);
+                    }
+                    return $result;
                 }
             }
             
@@ -405,9 +450,20 @@ function updateOtaStatus(string $deviceId, string $status, ?string $error = null
             elseif ($status === 'rollback') {
                 $cameras[$key]['ota_scheduled'] = null;
                 $cameras[$key]['ota_retry_count'] = 0;
+                
+                $result = saveCamerasConfig($cameras);
+                if ($result) {
+                    logOta("OTA rollback for device $deviceId", [
+                        'error' => $error
+                    ], LOG_LEVEL_ERROR);
+                }
+                return $result;
             }
             
-            return saveCamerasConfig($cameras);
+            // Pending status
+            else {
+                return saveCamerasConfig($cameras);
+            }
         }
     }
     

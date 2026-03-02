@@ -12,6 +12,7 @@
 #include "CameraMutex.h"
 #include "CameraCapture.h"
 #include "OTAManager.h"
+#include "RemoteLogger.h"
 
 // ============================================================================
 // Global Variables
@@ -113,8 +114,17 @@ void setup() {
         // Only setup time if WiFi is connected (NTP requires internet)
         if (wifiConnected || isWiFiConnected()) {
             setupTime();
+            
+            // Initialize remote logger (requires WiFi)
+            RemoteLogger::begin(
+                configManager.getServerUrl(),
+                configManager.getAuthToken(),
+                WiFi.macAddress()
+            );
         } else {
             Serial.println("Skipping NTP setup (no WiFi connection)");
+            // Disable remote logging if no WiFi
+            RemoteLogger::setEnabled(false);
         }
         
         // Initialize OTA manager
@@ -185,6 +195,13 @@ void setup() {
         // WiFi connected successfully - reset retry counter
         sleepManager.resetWifiRetryCount();
         
+        // Initialize remote logger
+        RemoteLogger::begin(
+            configManager.getServerUrl(),
+            configManager.getAuthToken(),
+            WiFi.macAddress()
+        );
+        
         setupCamera();
         
         // Check if NTP sync needed (>24 hours since last)
@@ -205,6 +222,7 @@ void setup() {
         if (otaManager.isFirstBootAfterOta()) {
             Serial.println("\n[OTA] First boot after update detected");
             Serial.println("[OTA] Forcing validation capture even if no timeslot due");
+            RemoteLogger::info("OTA", "First boot after OTA - validating");
             otaValidationPending = true;
             // Validation will occur in runCaptureMode() after successful upload
         }
@@ -239,6 +257,7 @@ void setup() {
             if (otaManager.isFirstBootAfterOta()) {
                 Serial.println("\n[OTA] First boot after update detected");
                 otaValidationPending = true;
+                RemoteLogger::info("OTA", "First boot after OTA detected, flagging validation need", JsonObject());
                 // Validation happens after first successful capture
             }
         }
@@ -846,14 +865,27 @@ bool captureAndPostImage() {
             if (otaManager.isOtaAvailable(response)) {
                 Serial.println("\n[OTA] Update available in response");
                 
-                // Only proceed with OTA in CONFIG or WAIT modes
-                // Never during CAPTURE mode (would delay critical wake cycle)
-                if (currentMode == MODE_CONFIG || currentMode == MODE_WAIT) {
-                    handleOtaUpdate(response);
-                } else {
-                    Serial.println("[OTA] Deferring OTA - not in suitable mode");
-                    // OTA will be picked up on next upload in suitable mode
+                // Process OTA in all modes
+                // Previously deferred in MODE_CAPTURE, but this created infinite deferral
+                // for timer-wake cameras with ≥5min intervals (always MODE_CAPTURE)
+                String modeStr = currentMode == MODE_CONFIG ? "CONFIG" : 
+                                currentMode == MODE_WAIT ? "WAIT" : "CAPTURE";
+                Serial.printf("[OTA] Processing update in mode: %s\n", modeStr.c_str());
+                
+                // Create context for remote logging
+                DynamicJsonDocument doc(256);
+                JsonObject context = doc.to<JsonObject>();
+                context["mode"] = modeStr;
+                
+                RemoteLogger::info("OTA", "Update available, processing", context);
+                
+                if (currentMode == MODE_CAPTURE) {
+                    Serial.println("[OTA] Note: OTA during CAPTURE mode will affect timing");
+                    Serial.println("[OTA] Next capture may be delayed by OTA duration");
+                    RemoteLogger::warn("OTA", "Processing OTA in CAPTURE mode - timing may be affected");
                 }
+                
+                handleOtaUpdate(response);
             }
             
             // If validation pending and capture successful, confirm OTA
@@ -901,11 +933,24 @@ void handleOtaUpdate(const String& response) {
     
     if (!otaInfo.available) {
         Serial.println("[OTA] No update available");
+        RemoteLogger::warn("OTA", "parseOtaInfo returned no update");
         return;
     }
     
+    // Log OTA attempt with details
+    DynamicJsonDocument doc(512);
+    JsonObject context = doc.to<JsonObject>();
+    context["firmware_file"] = otaInfo.firmwareFile;
+    context["version"] = otaInfo.firmwareVersion;
+    context["size"] = otaInfo.size;
+    context["download_url"] = otaInfo.downloadUrl;
+    RemoteLogger::info("OTA", "Starting OTA update", context);
+    
     // Store firmware file for validation after reboot
     pendingOtaFirmwareFile = otaInfo.firmwareFile;
+    
+    // Flush logs before OTA (device will reboot)
+    RemoteLogger::flush();
     
     // Perform OTA update (blocking operation)
     OtaResult result = otaManager.performUpdate(otaInfo, 
@@ -919,6 +964,13 @@ void handleOtaUpdate(const String& response) {
         // OTA failed, send error confirmation
         String errorMsg = "OTA failed: " + otaManager.getLastError();
         Serial.println(errorMsg);
+        
+        DynamicJsonDocument errDoc(256);
+        JsonObject errContext = errDoc.to<JsonObject>();
+        errContext["error"] = otaManager.getLastError();
+        errContext["result_code"] = result;
+        RemoteLogger::error("OTA", "OTA update failed", errContext);
+        RemoteLogger::flush();
         
         otaManager.sendConfirmation(configManager.getServerUrl(),
                                    configManager.getAuthToken(),

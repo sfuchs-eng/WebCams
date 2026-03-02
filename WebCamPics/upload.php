@@ -11,6 +11,7 @@ require_once __DIR__ . '/lib/storage.php';
 require_once __DIR__ . '/lib/image.php';
 require_once __DIR__ . '/lib/ota.php';
 require_once __DIR__ . '/lib/path.php';
+require_once __DIR__ . '/lib/logging.php';
 
 // Only accept POST requests
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -90,14 +91,10 @@ if (isset($_POST['auth']) && isset($_POST['cam']) && isset($_FILES['pic'])) {
     }
     
     // Log the upload
-    $logEntry = sprintf(
-        "[%s] Legacy upload from %s (%d bytes) - Saved as %s\n",
-        date('Y-m-d H:i:s'),
-        $deviceId,
-        $imageSize,
-        basename($processedPath)
-    );
-    file_put_contents(__DIR__ . '/logs/upload.log', $logEntry, FILE_APPEND);
+    logUpload("Legacy upload from $deviceId", [
+        'size' => $imageSize,
+        'filename' => basename($processedPath)
+    ]);
     
     // Update firmware version if provided
     $firmwareVersion = $_SERVER['HTTP_X_FIRMWARE_VERSION'] ?? null;
@@ -129,8 +126,47 @@ if (isset($_POST['auth']) && isset($_POST['cam']) && isset($_FILES['pic'])) {
         
         // Update OTA status to "pending"
         updateOtaStatus($deviceId, 'pending', null, null);
+        
+        // Log OTA offered (legacy API)
+        $cameras = loadCamerasConfig();
+        $retryCount = 0;
+        foreach ($cameras as $key => $camera) {
+            $cameraId = $camera['device_id'] ?? $camera['mac'] ?? '';
+            if (strtoupper(str_replace(['-', ':', ' '], '', $cameraId)) === strtoupper(str_replace(['-', ':', ' '], '', $deviceId))) {
+                $retryCount = $camera['ota_retry_count'] ?? 0;
+                break;
+            }
+        }
+        logOta("OTA offered to $deviceId (legacy upload)", [
+            'firmware_file' => $otaInfo['filename'],
+            'version' => $otaInfo['version'],
+            'size' => $otaInfo['size'],
+            'retry_count' => $retryCount
+        ]);
     } else {
         $response['ota'] = ['available' => false];
+        
+        // Log why OTA was not offered
+        $cameras = loadCamerasConfig();
+        foreach ($cameras as $key => $camera) {
+            $cameraId = $camera['device_id'] ?? $camera['mac'] ?? '';
+            if (strtoupper(str_replace(['-', ':', ' '], '', $cameraId)) === strtoupper(str_replace(['-', ':', ' '], '', $deviceId))) {
+                if (!empty($camera['ota_scheduled'])) {
+                    $retryCount = $camera['ota_retry_count'] ?? 0;
+                    if ($retryCount >= 2) {
+                        logOta("OTA NOT offered to $deviceId: retry limit reached (legacy upload)", [
+                            'scheduled_firmware' => $camera['ota_scheduled'],
+                            'retry_count' => $retryCount
+                        ], LOG_LEVEL_WARN);
+                    } else {
+                        logOta("OTA NOT offered to $deviceId: firmware file validation failed (legacy upload)", [
+                            'scheduled_firmware' => $camera['ota_scheduled']
+                        ], LOG_LEVEL_ERROR);
+                    }
+                }
+                break;
+            }
+        }
     }
     
     // Return success response (JSON format)
@@ -207,14 +243,10 @@ if (!$processedPath) {
 }
 
 // Log the upload
-$logEntry = sprintf(
-    "[%s] Image received from %s (%d bytes) - Saved as %s\n",
-    date('Y-m-d H:i:s'),
-    $deviceId,
-    $imageSize,
-    basename($processedPath)
-);
-file_put_contents(__DIR__ . '/logs/upload.log', $logEntry, FILE_APPEND);
+logUpload("Image received from $deviceId", [
+    'size' => $imageSize,
+    'filename' => basename($processedPath)
+]);
 
 // Update firmware version if provided
 $firmwareVersion = $_SERVER['HTTP_X_FIRMWARE_VERSION'] ?? null;
@@ -246,8 +278,47 @@ if ($otaInfo) {
     
     // Update OTA status to "pending"
     updateOtaStatus($deviceId, 'pending', null, null);
+    
+    // Log OTA offered
+    $cameras = loadCamerasConfig();
+    $retryCount = 0;
+    foreach ($cameras as $key => $camera) {
+        $cameraId = $camera['device_id'] ?? $camera['mac'] ?? '';
+        if (strtoupper(str_replace(['-', ':', ' '], '', $cameraId)) === strtoupper(str_replace(['-', ':', ' '], '', $deviceId))) {
+            $retryCount = $camera['ota_retry_count'] ?? 0;
+            break;
+        }
+    }
+    logOta("OTA offered to $deviceId", [
+        'firmware_file' => $otaInfo['filename'],
+        'version' => $otaInfo['version'],
+        'size' => $otaInfo['size'],
+        'retry_count' => $retryCount
+    ]);
 } else {
     $response['ota'] = ['available' => false];
+    
+    // Log why OTA was not offered
+    $cameras = loadCamerasConfig();
+    foreach ($cameras as $key => $camera) {
+        $cameraId = $camera['device_id'] ?? $camera['mac'] ?? '';
+        if (strtoupper(str_replace(['-', ':', ' '], '', $cameraId)) === strtoupper(str_replace(['-', ':', ' '], '', $deviceId))) {
+            if (!empty($camera['ota_scheduled'])) {
+                $retryCount = $camera['ota_retry_count'] ?? 0;
+                if ($retryCount >= 2) {
+                    logOta("OTA NOT offered to $deviceId: retry limit reached", [
+                        'scheduled_firmware' => $camera['ota_scheduled'],
+                        'retry_count' => $retryCount
+                    ], LOG_LEVEL_WARN);
+                } else {
+                    logOta("OTA NOT offered to $deviceId: firmware file validation failed", [
+                        'scheduled_firmware' => $camera['ota_scheduled']
+                    ], LOG_LEVEL_ERROR);
+                }
+            }
+            break;
+        }
+    }
 }
 
 // Return success response
