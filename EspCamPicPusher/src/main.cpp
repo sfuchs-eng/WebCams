@@ -4,6 +4,7 @@
 #include <HTTPClient.h>
 #include <time.h>
 #include "esp_camera.h"
+#include "esp_task_wdt.h"
 #include "config.h"
 #include "ConfigManager.h"
 #include "ScheduleManager.h"
@@ -949,6 +950,26 @@ void handleOtaUpdate(const String& response) {
     
     // Store firmware file for validation after reboot
     pendingOtaFirmwareFile = otaInfo.firmwareFile;
+    
+    // Stop web server to prevent watchdog timeout during OTA
+    if (webServer != nullptr) {
+        Serial.println("[OTA] Stopping web server...");
+        webServer->stop();
+        delete webServer;
+        webServer = nullptr;
+        
+        // Give async tasks time to fully clean up
+        Serial.println("[OTA] Waiting for async tasks cleanup...");
+        for (int i = 0; i < 20; i++) {
+            delay(100);
+            yield();
+        }
+        Serial.println("[OTA] Cleanup complete");
+        
+        // Disable watchdog temporarily (will reset on reboot)
+        Serial.println("[OTA] Disabling task watchdog for OTA operation...");
+        esp_task_wdt_deinit();
+    }
     
     // Flush logs before OTA (device will reboot)
     RemoteLogger::flush();

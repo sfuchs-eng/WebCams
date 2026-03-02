@@ -1,6 +1,7 @@
 #include "OTAManager.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "mbedtls/sha256.h"
 
 static const char* TAG = "OTAManager";
@@ -159,13 +160,30 @@ String OTAManager::buildFullUrl(const String& baseUrl, const String& path) {
         return path;
     }
     
-    // baseUrl can be:
-    //   - Domain root: "https://server.com"
-    //   - With path:   "https://server.com/cams"
-    // Append the endpoint path, handling trailing/leading slashes
+    // If path starts with '/', it's an absolute path from web root
+    // Extract protocol and domain from baseUrl, then append path
+    if (path.startsWith("/")) {
+        // Find the position after protocol (after ://)
+        int protocolEnd = baseUrl.indexOf("://");
+        if (protocolEnd > 0) {
+            // Find the first '/' after protocol (start of path)
+            int pathStart = baseUrl.indexOf("/", protocolEnd + 3);
+            if (pathStart > 0) {
+                // Return protocol+domain+path
+                return baseUrl.substring(0, pathStart) + path;
+            } else {
+                // No path in baseUrl, just append to domain
+                return baseUrl + path;
+            }
+        }
+        // Fallback: just append (shouldn't happen with valid URLs)
+        return baseUrl + path;
+    }
+    
+    // Otherwise, path is relative to baseUrl
     String url = baseUrl;
     
-    // Ensure no double slashes
+    // Ensure no double slashes for relative paths
     if (url.endsWith("/") && path.startsWith("/")) {
         return url.substring(0, url.length() - 1) + path;
     } else if (!url.endsWith("/") && !path.startsWith("/")) {
@@ -213,8 +231,14 @@ OtaResult OTAManager::downloadFirmware(const String& url, const String& authToke
     http.addHeader("X-Device-ID", deviceId);
     http.setTimeout(30000); // 30 second timeout for large file downloads
     
+    // Feed watchdog before long blocking HTTP call
+    esp_task_wdt_reset();
+    
     Serial.println("[OTA] Sending GET request...");
     int httpCode = http.GET();
+    
+    // Feed watchdog after HTTP call completes
+    esp_task_wdt_reset();
     
     Serial.printf("[OTA] HTTP response code: %d\n", httpCode);
     
@@ -293,7 +317,15 @@ OtaResult OTAManager::downloadFirmware(const String& url, const String& authToke
     Serial.println("[OTA] Writing firmware...");
     
     unsigned long lastPrint = 0;
+    unsigned long lastWdtReset = 0;
+    
     while (written < contentLength && http.connected()) {
+        // Feed watchdog every 100ms to prevent timeout
+        if (millis() - lastWdtReset > 100) {
+            esp_task_wdt_reset();
+            lastWdtReset = millis();
+        }
+        
         size_t available = stream->available();
         if (available) {
             size_t readBytes = stream->readBytes(buffer, min(available, sizeof(buffer)));
@@ -320,8 +352,13 @@ OtaResult OTAManager::downloadFirmware(const String& url, const String& authToke
                              _progress, written, contentLength);
                 lastPrint = millis();
             }
+            
+            // Yield to other tasks periodically
+            if (written % (32 * 1024) == 0) {  // Every 32KB
+                yield();
+            }
         } else {
-            delay(10);
+            delay(10);  // This also yields
         }
     }
     
