@@ -226,10 +226,9 @@ OtaResult OTAManager::downloadFirmware(const String& url, const String& authToke
     }
     
     Serial.println("[OTA] Adding headers...");
-    Serial.println("[OTA] Adding headers...");
     http.addHeader("X-Auth-Token", authToken);
     http.addHeader("X-Device-ID", deviceId);
-    http.setTimeout(30000); // 30 second timeout for large file downloads
+    http.setTimeout(30000); // 30 second timeout for connection + headers
     
     // Feed watchdog before long blocking HTTP call
     esp_task_wdt_reset();
@@ -492,4 +491,168 @@ String OTAManager::calculateSha256(const uint8_t* data, size_t length) {
     }
     
     return result;
+}
+
+// ============================================================================
+// NVS Persistence for Reboot-to-OTA Mode
+// ============================================================================
+
+bool OTAManager::savePendingUpdate(const OtaUpdateInfo& info) {
+    Serial.println("[OTA] Saving pending update to NVS");
+    
+    Preferences prefs;
+    if (!prefs.begin("ota", false)) {
+        Serial.println("[OTA] ERROR: Failed to open NVS namespace 'ota'");
+        return false;
+    }
+    
+    prefs.putBool("pending", true);
+    prefs.putString("fwFile", info.firmwareFile);
+    prefs.putString("fwVersion", info.firmwareVersion);
+    prefs.putString("dlUrl", info.downloadUrl);
+    prefs.putUInt("size", info.size);
+    prefs.putString("sha256", info.sha256);
+    prefs.putBool("mandatory", info.mandatory);
+    
+    prefs.end();
+    
+    Serial.printf("[OTA] Saved: %s v%s (%d bytes)\n", 
+                  info.firmwareFile.c_str(), info.firmwareVersion.c_str(), info.size);
+    return true;
+}
+
+OtaUpdateInfo OTAManager::loadPendingUpdate() {
+    OtaUpdateInfo info;
+    info.available = false;
+    
+    Preferences prefs;
+    if (!prefs.begin("ota", true)) {  // read-only
+        return info;
+    }
+    
+    if (!prefs.getBool("pending", false)) {
+        prefs.end();
+        return info;
+    }
+    
+    info.available = true;
+    info.firmwareFile = prefs.getString("fwFile", "");
+    info.firmwareVersion = prefs.getString("fwVersion", "");
+    info.downloadUrl = prefs.getString("dlUrl", "");
+    info.size = prefs.getUInt("size", 0);
+    info.sha256 = prefs.getString("sha256", "");
+    info.mandatory = prefs.getBool("mandatory", false);
+    
+    prefs.end();
+    
+    Serial.printf("[OTA] Loaded pending: %s v%s (%d bytes)\n",
+                  info.firmwareFile.c_str(), info.firmwareVersion.c_str(), info.size);
+    return info;
+}
+
+bool OTAManager::hasPendingUpdate() {
+    Preferences prefs;
+    if (!prefs.begin("ota", true)) {  // read-only
+        return false;
+    }
+    bool pending = prefs.getBool("pending", false);
+    prefs.end();
+    return pending;
+}
+
+void OTAManager::clearPendingUpdate() {
+    Serial.println("[OTA] Clearing pending update from NVS");
+    Preferences prefs;
+    if (!prefs.begin("ota", false)) {
+        return;
+    }
+    // Only remove pending-related keys, preserve failure tracking
+    prefs.remove("pending");
+    prefs.remove("fwFile");
+    prefs.remove("fwVersion");
+    prefs.remove("dlUrl");
+    prefs.remove("size");
+    prefs.remove("sha256");
+    prefs.remove("mandatory");
+    prefs.end();
+}
+
+void OTAManager::recordOtaFailure(const String& firmwareFile) {
+    Preferences prefs;
+    if (!prefs.begin("ota", false)) {
+        return;
+    }
+    
+    String storedFile = prefs.getString("failFile", "");
+    uint32_t count = 0;
+    
+    if (storedFile == firmwareFile) {
+        // Same firmware — increment existing counter
+        count = prefs.getUInt("failCount", 0) + 1;
+    } else {
+        // Different firmware — reset counter
+        count = 1;
+        prefs.putString("failFile", firmwareFile);
+    }
+    
+    prefs.putUInt("failCount", count);
+    prefs.end();
+    
+    Serial.printf("[OTA] Recorded failure #%u for %s\n", count, firmwareFile.c_str());
+}
+
+uint32_t OTAManager::getOtaFailureCount(const String& firmwareFile) {
+    Preferences prefs;
+    if (!prefs.begin("ota", true)) {  // read-only
+        return 0;
+    }
+    
+    String storedFile = prefs.getString("failFile", "");
+    uint32_t count = 0;
+    if (storedFile == firmwareFile) {
+        count = prefs.getUInt("failCount", 0);
+    }
+    prefs.end();
+    return count;
+}
+
+void OTAManager::clearOtaFailures() {
+    Preferences prefs;
+    if (!prefs.begin("ota", false)) {
+        return;
+    }
+    prefs.remove("failFile");
+    prefs.remove("failCount");
+    prefs.end();
+    Serial.println("[OTA] Cleared failure tracking");
+}
+
+void OTAManager::saveConfirmInfo(const String& firmwareFile) {
+    Preferences prefs;
+    if (!prefs.begin("ota", false)) {
+        return;
+    }
+    prefs.putString("confFile", firmwareFile);
+    prefs.end();
+    Serial.printf("[OTA] Saved confirm info: %s\n", firmwareFile.c_str());
+}
+
+String OTAManager::loadConfirmFirmwareFile() {
+    Preferences prefs;
+    if (!prefs.begin("ota", true)) {  // read-only
+        return "";
+    }
+    String file = prefs.getString("confFile", "");
+    prefs.end();
+    return file;
+}
+
+void OTAManager::clearConfirmInfo() {
+    Preferences prefs;
+    if (!prefs.begin("ota", false)) {
+        return;
+    }
+    prefs.remove("confFile");
+    prefs.end();
+    Serial.println("[OTA] Cleared confirm info");
 }

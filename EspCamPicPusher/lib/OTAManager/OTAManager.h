@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <Preferences.h>
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include <ArduinoJson.h>
@@ -117,6 +118,68 @@ public:
     bool sendConfirmation(const String& serverUrl, const String& authToken, 
                          const String& deviceId, bool success, 
                          const String& firmwareFile, const String& errorMessage);
+    
+    /**
+     * Save pending OTA update info to NVS for reboot-to-OTA-mode
+     * @param info OTA update information from server response
+     * @return true if saved successfully
+     */
+    bool savePendingUpdate(const OtaUpdateInfo& info);
+    
+    /**
+     * Load pending OTA update info from NVS
+     * @return OtaUpdateInfo (check .available field)
+     */
+    OtaUpdateInfo loadPendingUpdate();
+    
+    /**
+     * Check if there is a pending OTA update in NVS
+     * @return true if pending update exists
+     */
+    bool hasPendingUpdate();
+    
+    /**
+     * Clear pending OTA update from NVS (after success or failure)
+     */
+    void clearPendingUpdate();
+    
+    /**
+     * Record an OTA failure for a specific firmware file.
+     * Increments failure counter in NVS. After maxRetries failures
+     * for the same file, handleOtaUpdate() will refuse further attempts.
+     * @param firmwareFile The firmware filename that failed
+     */
+    void recordOtaFailure(const String& firmwareFile);
+    
+    /**
+     * Get the number of OTA failures recorded for a firmware file.
+     * @param firmwareFile The firmware filename to check
+     * @return failure count (0 if none or different file)
+     */
+    uint32_t getOtaFailureCount(const String& firmwareFile);
+    
+    /**
+     * Clear OTA failure tracking (call after successful OTA validation)
+     */
+    void clearOtaFailures();
+    
+    /**
+     * Save firmware filename for post-OTA confirmation.
+     * Called before performUpdate() so the filename survives the reboot.
+     * @param firmwareFile The firmware filename being installed
+     */
+    void saveConfirmInfo(const String& firmwareFile);
+    
+    /**
+     * Load the firmware filename saved for post-OTA confirmation.
+     * @return firmware filename, or empty string if none saved
+     */
+    String loadConfirmFirmwareFile();
+    
+    /**
+     * Clear post-OTA confirmation info from NVS.
+     */
+    void clearConfirmInfo();
     
     /**
      * Get current OTA state

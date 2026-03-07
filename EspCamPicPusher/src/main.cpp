@@ -30,7 +30,8 @@ OTAManager otaManager;
 enum OperatingMode {
     MODE_CONFIG,    // Web server active for configuration
     MODE_CAPTURE,   // Quick capture and return to sleep
-    MODE_WAIT       // Waiting for next capture (not sleeping)
+    MODE_WAIT,      // Waiting for next capture (not sleeping)
+    MODE_OTA        // Dedicated OTA update mode (minimal boot)
 };
 
 OperatingMode currentMode = MODE_CONFIG;
@@ -60,6 +61,7 @@ void blinkLED(int times, int delayMs);
 void runConfigMode();
 void runCaptureMode();
 void runWaitMode();
+void runOtaMode();
 void enterSleepMode();
 void buildScheduleFromConfig();
 bool shouldEnterSleepMode();
@@ -86,6 +88,34 @@ void setup() {
         blinkLED(10, 100);
         delay(5000);
         ESP.restart();
+    }
+    
+    // ================================================================
+    // Check for pending OTA update BEFORE initializing anything else.
+    // This ensures a clean, minimal boot: no camera, no web server,
+    // no AsyncTCP task — maximum free heap for OTA download + flash.
+    // ================================================================
+    if (otaManager.hasPendingUpdate()) {
+        Serial.println("\n=== PENDING OTA UPDATE DETECTED ===");
+        Serial.println("=== Entering OTA MODE (minimal boot) ===");
+        currentMode = MODE_OTA;
+        
+        // Only need WiFi for OTA - skip camera, web server, NTP, remote logger
+        bool wifiConnected = setupWiFiSTA();
+        if (!wifiConnected) {
+            Serial.println("[OTA] WiFi failed - cannot perform OTA update");
+            Serial.println("[OTA] Clearing pending update and rebooting normally");
+            otaManager.clearPendingUpdate();
+            delay(1000);
+            ESP.restart();
+            return;
+        }
+        
+        // Initialize OTA manager (partition detection)
+        otaManager.begin();
+        
+        Serial.println("=== OTA Mode Ready ===\n");
+        return;  // Skip all other init, go to loop() → runOtaMode()
     }
     
     // Determine operating mode based on wake reason
@@ -136,6 +166,8 @@ void setup() {
             if (otaManager.isFirstBootAfterOta()) {
                 Serial.println("\n[OTA] First boot after update detected");
                 otaValidationPending = true;
+                pendingOtaFirmwareFile = otaManager.loadConfirmFirmwareFile();
+                Serial.printf("[OTA] Firmware to confirm: %s\n", pendingOtaFirmwareFile.c_str());
                 // Validation happens after first successful capture
             }
         }
@@ -223,6 +255,8 @@ void setup() {
         if (otaManager.isFirstBootAfterOta()) {
             Serial.println("\n[OTA] First boot after update detected");
             Serial.println("[OTA] Forcing validation capture even if no timeslot due");
+            pendingOtaFirmwareFile = otaManager.loadConfirmFirmwareFile();
+            Serial.printf("[OTA] Firmware to confirm: %s\n", pendingOtaFirmwareFile.c_str());
             RemoteLogger::info("OTA", "First boot after OTA - validating");
             otaValidationPending = true;
             // Validation will occur in runCaptureMode() after successful upload
@@ -258,6 +292,8 @@ void setup() {
             if (otaManager.isFirstBootAfterOta()) {
                 Serial.println("\n[OTA] First boot after update detected");
                 otaValidationPending = true;
+                pendingOtaFirmwareFile = otaManager.loadConfirmFirmwareFile();
+                Serial.printf("[OTA] Firmware to confirm: %s\n", pendingOtaFirmwareFile.c_str());
                 RemoteLogger::info("OTA", "First boot after OTA detected, flagging validation need", JsonObject());
                 // Validation happens after first successful capture
             }
@@ -290,6 +326,10 @@ void loop() {
             
         case MODE_WAIT:
             runWaitMode();
+            break;
+            
+        case MODE_OTA:
+            runOtaMode();
             break;
     }
     
@@ -720,6 +760,70 @@ void runWaitMode() {
     }
 }
 
+void runOtaMode() {
+    // This runs once from loop() after the minimal OTA boot in setup().
+    // No camera, no web server, no AsyncTCP — clean environment for OTA.
+    
+    Serial.println("\n======================================");
+    Serial.println("[OTA] Executing OTA Update (dedicated mode)");
+    Serial.println("======================================");
+    
+    // Load pending update info from NVS
+    OtaUpdateInfo otaInfo = otaManager.loadPendingUpdate();
+    
+    if (!otaInfo.available) {
+        Serial.println("[OTA] ERROR: No pending update found in NVS (unexpected)");
+        otaManager.clearPendingUpdate();
+        Serial.println("[OTA] Rebooting normally...");
+        delay(1000);
+        ESP.restart();
+        return;
+    }
+    
+    Serial.printf("[OTA] Firmware: %s v%s\n", otaInfo.firmwareFile.c_str(), otaInfo.firmwareVersion.c_str());
+    Serial.printf("[OTA] Size: %d bytes, SHA256: %s\n", otaInfo.size, otaInfo.sha256.c_str());
+    Serial.printf("[OTA] Free heap: %d bytes\n", ESP.getFreeHeap());
+    
+    // Clear pending flag NOW, before performUpdate(). The data is already in
+    // otaInfo in memory. performUpdate() calls esp_restart() on success, so
+    // clearing after would never execute — causing an infinite OTA reboot loop.
+    otaManager.clearPendingUpdate();
+    
+    // Save firmware filename for post-OTA confirmation (survives the reboot)
+    otaManager.saveConfirmInfo(otaInfo.firmwareFile);
+    
+    // Perform OTA update (download, flash, validate, reboot)
+    OtaResult result = otaManager.performUpdate(otaInfo,
+                                                configManager.getAuthToken(),
+                                                WiFi.macAddress(),
+                                                configManager.getServerUrl());
+    
+    if (result == OTA_SUCCESS) {
+        // performUpdate() calls esp_restart() on success — never reaches here.
+        // But just in case:
+        Serial.println("[OTA] Update applied, rebooting...");
+        delay(1000);
+        ESP.restart();
+    } else {
+        // OTA failed — record failure for retry limiting
+        String errorMsg = "OTA failed in dedicated mode: " + otaManager.getLastError();
+        Serial.println(errorMsg);
+        otaManager.recordOtaFailure(otaInfo.firmwareFile);
+        
+        // Try to send failure confirmation to server
+        otaManager.sendConfirmation(configManager.getServerUrl(),
+                                   configManager.getAuthToken(),
+                                   WiFi.macAddress(),
+                                   false,
+                                   otaInfo.firmwareFile,
+                                   errorMsg);
+        
+        Serial.println("[OTA] Rebooting to normal operation...");
+        delay(2000);
+        ESP.restart();
+    }
+}
+
 void enterSleepMode() {
     struct tm timeinfo;
     if (!ScheduleManager::getCurrentTime(&timeinfo)) {
@@ -865,28 +969,11 @@ bool captureAndPostImage() {
             
             // Check for OTA available
             if (otaManager.isOtaAvailable(response)) {
-                Serial.println("\n[OTA] Update available in response");
+                Serial.println("\n[OTA] Update available in server response");
                 
-                // Process OTA in all modes
-                // Previously deferred in MODE_CAPTURE, but this created infinite deferral
-                // for timer-wake cameras with ≥5min intervals (always MODE_CAPTURE)
-                String modeStr = currentMode == MODE_CONFIG ? "CONFIG" : 
-                                currentMode == MODE_WAIT ? "WAIT" : "CAPTURE";
-                Serial.printf("[OTA] Processing update in mode: %s\n", modeStr.c_str());
-                
-                // Create context for remote logging
-                DynamicJsonDocument doc(256);
-                JsonObject context = doc.to<JsonObject>();
-                context["mode"] = modeStr;
-                
-                RemoteLogger::info("OTA", "Update available, processing", context);
-                
-                if (currentMode == MODE_CAPTURE) {
-                    Serial.println("[OTA] Note: OTA during CAPTURE mode will affect timing");
-                    Serial.println("[OTA] Next capture may be delayed by OTA duration");
-                    RemoteLogger::warn("OTA", "Processing OTA in CAPTURE mode - timing may be affected");
-                }
-                
+                // handleOtaUpdate saves OTA info to NVS and reboots into
+                // dedicated OTA mode (no camera, no web server, no AsyncTCP).
+                // This call does not return — the device will restart.
                 handleOtaUpdate(response);
             }
             
@@ -928,7 +1015,7 @@ void blinkLED(int times, int delayMs) {
 
 void handleOtaUpdate(const String& response) {
     Serial.println("\n======================================");
-    Serial.println("[OTA] Processing OTA Update");
+    Serial.println("[OTA] OTA Update Available - Preparing Reboot");
     Serial.println("======================================");
     
     OtaUpdateInfo otaInfo = otaManager.parseOtaInfo(response);
@@ -939,69 +1026,40 @@ void handleOtaUpdate(const String& response) {
         return;
     }
     
-    // Log OTA attempt with details
+    // Check if this firmware has failed too many times (max 3 retries)
+    static const uint32_t OTA_MAX_RETRIES = 3;
+    uint32_t failCount = otaManager.getOtaFailureCount(otaInfo.firmwareFile);
+    if (failCount >= OTA_MAX_RETRIES) {
+        Serial.printf("[OTA] Firmware %s has failed %u times (max %u) — skipping\n",
+                      otaInfo.firmwareFile.c_str(), failCount, OTA_MAX_RETRIES);
+        RemoteLogger::warn("OTA", "Skipping OTA: max retries exceeded for " + otaInfo.firmwareFile);
+        return;
+    }
+    
+    // Log OTA intent with details (while RemoteLogger is still healthy)
     DynamicJsonDocument doc(512);
     JsonObject context = doc.to<JsonObject>();
     context["firmware_file"] = otaInfo.firmwareFile;
     context["version"] = otaInfo.firmwareVersion;
     context["size"] = otaInfo.size;
-    context["download_url"] = otaInfo.downloadUrl;
-    RemoteLogger::info("OTA", "Starting OTA update", context);
+    context["attempt"] = failCount + 1;
+    context["max_retries"] = OTA_MAX_RETRIES;
+    RemoteLogger::info("OTA", "Saving OTA info and rebooting to OTA mode", context);
     
-    // Store firmware file for validation after reboot
-    pendingOtaFirmwareFile = otaInfo.firmwareFile;
-    
-    // Stop web server to prevent watchdog timeout during OTA
-    if (webServer != nullptr) {
-        Serial.println("[OTA] Stopping web server...");
-        webServer->stop();
-        delete webServer;
-        webServer = nullptr;
-        
-        // Give async tasks time to fully clean up
-        Serial.println("[OTA] Waiting for async tasks cleanup...");
-        for (int i = 0; i < 20; i++) {
-            delay(100);
-            yield();
-        }
-        Serial.println("[OTA] Cleanup complete");
-        
-        // Disable watchdog temporarily (will reset on reboot)
-        Serial.println("[OTA] Disabling task watchdog for OTA operation...");
-        esp_task_wdt_deinit();
+    // Save OTA metadata to NVS so the dedicated OTA boot can use it
+    if (!otaManager.savePendingUpdate(otaInfo)) {
+        Serial.println("[OTA] ERROR: Failed to save pending update to NVS");
+        RemoteLogger::error("OTA", "Failed to save OTA info to NVS");
+        return;
     }
     
-    // Flush logs before OTA (device will reboot)
+    // Flush remote logs before reboot (still in a clean state, no async_tcp issues)
     RemoteLogger::flush();
     
-    // Perform OTA update (blocking operation)
-    OtaResult result = otaManager.performUpdate(otaInfo, 
-                                                configManager.getAuthToken(),
-                                                WiFi.macAddress(),
-                                                configManager.getServerUrl());
-    
-    if (result == OTA_SUCCESS) {
-        // Device will reboot, never reaches here
-        Serial.println("[OTA] Update applied, rebooting...");
-    } else {
-        // OTA failed, send error confirmation
-        String errorMsg = "OTA failed: " + otaManager.getLastError();
-        Serial.println(errorMsg);
-        
-        DynamicJsonDocument errDoc(256);
-        JsonObject errContext = errDoc.to<JsonObject>();
-        errContext["error"] = otaManager.getLastError();
-        errContext["result_code"] = result;
-        RemoteLogger::error("OTA", "OTA update failed", errContext);
-        RemoteLogger::flush();
-        
-        otaManager.sendConfirmation(configManager.getServerUrl(),
-                                   configManager.getAuthToken(),
-                                   WiFi.macAddress(),
-                                   false,
-                                   otaInfo.firmwareFile,
-                                   errorMsg);
-    }
+    Serial.println("[OTA] Rebooting into dedicated OTA mode...");
+    delay(1000);
+    ESP.restart();
+    // Never reaches here
 }
 
 void validateOtaUpdate() {
@@ -1009,7 +1067,12 @@ void validateOtaUpdate() {
     
     if (otaManager.confirmUpdate()) {
         // Mark partition as valid
-        Serial.println("[OTA] Update validated successfully");
+        Serial.println("[OTA] Update confirmed successfully");
+        
+        // Clear any leftover OTA data from NVS
+        otaManager.clearPendingUpdate();
+        otaManager.clearOtaFailures();
+        otaManager.clearConfirmInfo();
         
         // Send success confirmation to server
         otaManager.sendConfirmation(configManager.getServerUrl(),
@@ -1019,9 +1082,13 @@ void validateOtaUpdate() {
                                    pendingOtaFirmwareFile,
                                    "");
         
+        // Log success via RemoteLogger (now safe, normal boot)
+        RemoteLogger::info("OTA", "Update validated and confirmed");
+        
         otaValidationPending = false;
         pendingOtaFirmwareFile = "";
     } else {
         Serial.println("[OTA] Validation failed - rollback will occur on next reboot");
+        RemoteLogger::error("OTA", "Update validation failed, rollback pending");
     }
 }

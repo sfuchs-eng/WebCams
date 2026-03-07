@@ -225,19 +225,52 @@ Power On → Sleep Manager → Check Wake Reason
 1. **No GPIO button wake** - Must power cycle to re-enter CONFIG mode
 2. **RTC drift** - ESP32 internal RTC drifts ~5% per hour without external crystal
 3. **USB power issue** - USB connection may prevent deepest sleep
-4. **No OTA updates** - Firmware updates require USB connection
-5. **Single schedule** - Can't have different schedules for different days
+4. **Single schedule** - Can't have different schedules for different days
 
 ## Future Enhancement Suggestions
 
 - GPIO button to force CONFIG mode from sleep
 - mDNS support (`http://espcam.local/`)
-- OTA firmware updates via web UI
 - Battery voltage monitoring and reporting
 - External RTC module support for accurate timekeeping
-- WiFi AP mode as fallback if STA fails
 - Multiple upload destinations
 - Camera parameter tuning via web UI
+
+---
+
+## OTA Firmware Update System (added March 2026)
+
+Over-the-air firmware updates implemented. See [OTA_UPDATE_SPECIFICATION.md](../Specs/OTA_UPDATE_SPECIFICATION.md) for full details.
+
+### Architecture: Reboot-to-OTA Mode
+
+OTA uses a dedicated minimal boot mode (`MODE_OTA`) to avoid the `async_tcp` task watchdog crash that occurs when AsyncWebServer is stopped inline, and to maximize free heap (~283 KB) for the TLS download.
+
+**Flow:**
+```
+Image upload → server responds with OTA info
+  → save metadata to NVS + flush RemoteLogger → ESP.restart()
+  → setup() detects NVS flag → MODE_OTA (WiFi only, no camera/webserver)
+  → runOtaMode(): clear NVS flag, performUpdate() → flash → esp_restart()
+  → normal boot: isFirstBootAfterOta() → load confFile from NVS
+  → first capture → validateOtaUpdate() → sendConfirmation() to server
+```
+
+### New Files
+
+- **`lib/OTAManager/OTAManager.h/.cpp`** — OTA library: ESP-IDF OTA ops, SHA256 streaming validation, NVS persistence (pending, confirmInfo, failure tracking)
+- **`AI/Specs/OTA_UPDATE_SPECIFICATION.md`** — Full system specification
+- **`AI/Reports/OTA_BUILD_UPLOAD.md`** — Build and upload script documentation
+- **`build-and-upload-ota.sh`** — Automated build + server upload script
+- **`partitions.csv`** — Dual OTA partition table (app0/app1, 1.5 MB each)
+
+### Key Properties
+
+- **Mode-agnostic**: OTA triggered identically from CONFIG, CAPTURE, or WAIT mode
+- **Client-side retry limit**: 3 failures per firmware file → skip OTA, resume normal operation
+- **No reboot loop**: NVS pending flag cleared before flashing, not after
+- **Confirmation persistence**: firmware filename saved in NVS (`confFile`) so post-OTA reboot knows what to confirm
+- **Safe logging**: RemoteLogger flushed before OTA reboot (healthy state); during OTA mode: Serial only
 
 ## Compliance with Specification
 

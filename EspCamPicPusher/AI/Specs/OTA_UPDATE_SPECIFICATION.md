@@ -1,7 +1,7 @@
 # OTA Firmware Update System Specification
 
-**Document Version:** 1.0  
-**Date:** March 1, 2026  
+**Document Version:** 1.1  
+**Date:** March 7, 2026  
 **Project:** EspCamPicPusher / WebCamPics  
 **Author:** AI Specification Agent
 
@@ -29,13 +29,14 @@ Implement over-the-air (OTA) firmware updates for ESP32-S3 camera devices using 
 ### Design Principles
 
 1. **ESP-IDF Native**: Use `esp_ota_*` and `esp_partition_*` APIs directly (no Arduino HTTPUpdate library)
-2. **Deep Sleep Compatible**: OTA operations occur during CONFIG or WAIT modes after image-pushing only
+2. **Deep Sleep Compatible**: OTA operations occur after image-pushing in any mode
 3. **Fail-Safe**: Automatic rollback on validation failure
 4. **Minimal Memory**: Stream firmware data, don't buffer entire binary
 5. **Admin-Controlled**: Server-side scheduling prevents unwanted updates
 6. **Per-Device Targeting**: Different cameras can have different firmware versions
-7. **Battery Protection**: Maximum 2 retry attempts per firmware version to prevent battery drain loops
+7. **Battery Protection**: Maximum 3 client-side retry attempts per firmware file to prevent battery drain loops
 8. **Immediate Validation**: Force capture+validation after OTA boot even when no timeslot is due
+9. **Dedicated OTA Mode**: OTA flashing happens in a minimal boot (no camera, no AsyncWebServer) to avoid watchdog conflicts and memory pressure
 
 ### Update Lifecycle
 
@@ -53,19 +54,24 @@ Implement over-the-air (OTA) firmware updates for ESP32-S3 camera devices using 
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│ 4. Download     │  Camera downloads firmware.bin via HTTPS GET
+│ 4. Save & Reboot│  OTA metadata saved to NVS → RemoteLogger flush → ESP.restart()
+└────────┬────────┘  (safe: RemoteLogger still healthy, no async_tcp conflict)
+         │
+┌────────▼────────┐
+│ 5. OTA Mode     │  Minimal boot: WiFi only, no camera, no AsyncWebServer
+│    Boot         │  NVS flag cleared → performUpdate() → download → flash
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│ 5. Flash/Reboot │  Write to ota_1 partition, set boot partition, reboot
+│ 6. Flash/Reboot │  Write to inactive partition, set boot partition, esp_restart()
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│ 6. Validation   │  New firmware confirms success → mark valid → confirm to server
+│ 7. Validation   │  New firmware confirms success → mark valid → confirm to server
 └────────┬────────┘  OR fails validation → rollback to previous partition
          │
 ┌────────▼────────┐
-│ 7. Confirmation │  POST to /ota-confirm.php with status → clear scheduled update
+│ 8. Confirmation │  POST to /ota-confirm.php with status → clear scheduled update
 └─────────────────┘
 ```
 
@@ -195,6 +201,25 @@ Core OTA functionality using ESP-IDF functions:
 - `esp_ota_set_boot_partition()` - Switch boot partition
 - `esp_ota_mark_app_valid_cancel_rollback()` - Confirm update
 
+**NVS Namespace `"ota"` — Key Layout:**
+
+| Key | Type | Purpose |
+|-----|------|---------|
+| `pending` | bool | Pending OTA boot flag |
+| `fwFile` | string | Firmware filename to flash |
+| `fwVersion` | string | Firmware version string |
+| `dlUrl` | string | Download URL/path |
+| `size` | uint32 | Expected size in bytes |
+| `sha256` | string | Expected SHA256 checksum |
+| `mandatory` | bool | Mandatory update flag |
+| `confFile` | string | Firmware file for post-reboot confirmation |
+| `failFile` | string | Firmware file associated with failure counter |
+| `failCount` | uint32 | Number of failed attempts for `failFile` |
+
+`pending`/`fwFile`/etc. are cleared **before** `performUpdate()` to prevent reboot loops.  
+`confFile` is written alongside them and only cleared after successful server confirmation.  
+`failFile`/`failCount` persist across reboots; auto-reset when a different firmware file is offered.
+
 #### 2.2 Integration Points
 
 **Upload Response Extension:**
@@ -276,36 +301,64 @@ X-Device-ID: {device_id}
 
 ## State Machine Integration
 
-### OTA-Compatible Modes
+### Operating Modes
 
-**CONFIG Mode:** ✅ OTA Allowed
-- Web server active, no time pressure
-- Full WiFi connectivity
-- User can monitor progress via serial
+Four modes are defined in `OperatingMode`:
 
-**WAIT Mode:** ✅ OTA Allowed (if >10 min until next capture)
-- Device awake between close captures
-- WiFi active
+| Mode | Description | OTA Trigger |
+|------|-------------|-------------|
+| `MODE_CONFIG` | Web server active | ✅ After successful image upload |
+| `MODE_CAPTURE` | Timer-wake capture cycle | ✅ After successful image upload |
+| `MODE_WAIT` | Waiting for imminent capture | ✅ After successful image upload |
+| `MODE_OTA` | **Dedicated OTA flash mode** | N/A — executes OTA then reboots |
 
-**CAPTURE Mode:** ✅ OTA Allowed (after image push)
-- Time-critical wake cycle
-- OTA only performed AFTER successful image upload
-- Ensures OTA doesn't delay scheduled captures
+### OTA is Mode-Agnostic
+
+OTA is triggered identically from any mode: after a successful image upload, if the server response contains `ota.available = true`, `handleOtaUpdate()` saves metadata to NVS and calls `ESP.restart()`. This avoids all mode-specific complications.
+
+### MODE_OTA Boot Path
+
+Checked in `setup()` **before** camera, web server, NTP, or RemoteLogger initialization:
+
+```
+setup() begins
+  │
+  ├─ configManager.begin()        ← Only NVS, no network
+  │
+  ├─ otaManager.hasPendingUpdate()?
+  │     YES → WiFi only → otaManager.begin() → return (→ loop → runOtaMode())
+  │     NO  → normal init continues
+  │
+  └─ normal mode selection (WAKE reason)
+```
+
+**Resources initialized in OTA mode:** WiFi, OTAManager  
+**Resources NOT initialized:** camera, AsyncWebServer (no `async_tcp` task), NTP, RemoteLogger
+
+This gives ~283 KB free heap vs. ~180 KB in full CONFIG mode, and eliminates the `async_tcp` watchdog crash that previously occurred when AsyncWebServer was stopped inline before OTA.
 
 ### First Boot After OTA
 
 1. Device boots from new partition
 2. Partition state: `ESP_OTA_IMG_PENDING_VERIFY`
-3. **Force immediate capture+validation** even if no timeslot is due
-4. On successful capture: Call `esp_ota_mark_app_valid_cancel_rollback()`
-5. Send confirmation to server
-6. If capture/validation fails, device auto-rolls back on next boot
+3. `otaManager.isFirstBootAfterOta()` → true in `setup()`
+4. `pendingOtaFirmwareFile` loaded from NVS key `confFile` (persisted before the OTA flash)
+5. **Force immediate capture+validation** even if no timeslot is due
+6. On successful capture: call `esp_ota_mark_app_valid_cancel_rollback()`
+7. Send confirmation POST to `/ota-confirm.php` with the firmware filename
+8. Clear `confFile`, failure tracking, and any leftover pending keys from NVS
+9. If capture/validation fails, device auto-rolls back on next reboot
 
-**Retry Limit Protection:**
-- Server tracks `ota_retry_count` for each camera+firmware pair
-- Maximum 2 failed attempts per firmware version
-- After 2 failures, server stops offering that firmware to the camera
-- Admin must manually clear retry counter to re-attempt (indicates fix was applied)
+### Client-Side Retry Limiting
+
+In addition to server-side retry tracking, the firmware enforces its own limit:
+
+- NVS stores `failFile` (firmware filename) and `failCount` (integer)
+- `handleOtaUpdate()` checks `failCount >= 3` **before** saving and rebooting
+- If limit reached: log warning, skip OTA, continue normal operation
+- Counter auto-resets when the server offers a **different** firmware filename
+- Counter is cleared on successful OTA validation
+- This prevents camera lock-out if server-side retry tracking fails or network communication is intermittent
 
 ---
 
@@ -342,35 +395,50 @@ X-Device-ID: {device_id}
 
 ### Error Categories
 
-1. **Download Errors:** Retry on next upload
+1. **Download Errors:** Retry on next upload (up to 3 client-side attempts)
 2. **Flash Errors:** Abort, keep current firmware
 3. **Validation Errors:** Abort before flashing
 4. **Boot Errors:** ESP-IDF auto-rollback
+5. **WiFi Unavailable in OTA Mode:** Clear pending update, reboot normally
 
 ### Confirmation Protocol
 
 **Success:** Server clears `ota_scheduled`, updates `firmware_version`, resets `ota_retry_count` to 0
 
-**Failure:** Server increments `ota_retry_count`. If count >= 2, clears `ota_scheduled` (no further retries)
+**Failure:** Server increments `ota_retry_count`. If count reaches server-side limit, clears `ota_scheduled` (no further retries)
 
 **Rollback:** Server clears `ota_scheduled`, resets `ota_retry_count` (firmware incompatible)
 
-### Retry Limit Mechanism
+### Client-Side Retry Limit Mechanism
 
-**Purpose:** Prevent battery drain from repeated failed OTA loops
+**Purpose:** Prevent battery drain from repeated failed OTA cycles, independent of server communication
 
 **Implementation:**
-1. Server tracks `ota_retry_count` in cameras.json (0-2)
-2. On OTA failure: increment counter
-3. At count = 2: automatically clear `ota_scheduled` (stop offering firmware)
-4. Upload response checks retry count before including OTA offer
-5. Admin can manually reset counter after investigating/fixing issue
+1. `OTAManager` tracks `failCount` per firmware filename in NVS namespace `"ota"`
+2. Before saving a new pending update, `handleOtaUpdate()` checks `getOtaFailureCount(firmwareFile) >= 3`
+3. If limit reached: skip OTA, log warning via RemoteLogger, return without rebooting
+4. Counter tracks the filename: offering a different firmware resets it automatically
+5. Counter cleared on successful OTA validation (`clearOtaFailures()`)
+6. Attempt number included in RemoteLogger context on each initiation
 
 **Battery Protection:**
-- Max 2 download attempts per firmware version
-- Prevents infinite retry loops
-- Each failed attempt may take 30-60 seconds + WiFi time
-- Without limit, could drain 2000mAh battery in hours
+- Max 3 download+flash attempts per firmware file
+- Each failed cycle: ~30-60s download + WiFi reconnect time
+- Server-side limit provides additional guard; client-side limit adds defense-in-depth
+
+### Logging Strategy
+
+OTA operations span 2-3 reboots. RemoteLogger (synchronous HTTP) is only used when safe:
+
+| Event | Logging method |
+|-------|---------------|
+| OTA detected in upload response | RemoteLogger (still in normal boot, healthy state) |
+| Before OTA reboot | `RemoteLogger::flush()` called to drain buffer |
+| During OTA mode boot | Serial only (RemoteLogger not initialized) |
+| OTA failure in dedicated mode | `sendConfirmation()` to server; Serial |
+| First boot after success | RemoteLogger available (normal boot) |
+| Validation confirmed | RemoteLogger::info + sendConfirmation |
+| Validation failed / rollback | RemoteLogger::error |
 
 ---
 
@@ -453,21 +521,29 @@ spiffs,     data, spiffs,  0x310000,0xF0000,
 - [ ] Firmware upload works
 - [ ] Checksums calculated correctly
 - [ ] OTA appears in upload response when scheduled
-- [ ] ESP32 downloads firmware via HTTPS
+- [ ] ESP32 saves OTA info to NVS and reboots into MODE_OTA
+- [ ] OTA mode boot: no AsyncWebServer, no camera initialized
+- [ ] ESP32 downloads firmware via HTTPS (~283 KB free heap)
 - [ ] SHA256 validation works
 - [ ] Partition write successful
+- [ ] NVS pending flag cleared before flash (no reboot loop on power loss)
+- [ ] confFile persisted and loaded correctly after OTA reboot
 - [ ] Device boots from new partition
 - [ ] First-boot validation works
-- [ ] Confirmation sent to server
+- [ ] Confirmation sent to server with correct firmware filename
 - [ ] Rollback works on failure
-- [ ] OTA deferred in CAPTURE mode
+- [ ] OTA works from CONFIG mode (was broken: async_tcp WDT crash)
+- [ ] OTA works from CAPTURE mode (was broken: dual TLS + camera DMA conflict)
+- [ ] OTA works from WAIT mode
 - [ ] Multiple cameras update independently
 
 ### Edge Cases
 
-- [ ] Power loss during download (resilient)
-- [ ] WiFi drops during download (retry works)
-- [ ] Invalid firmware rejected
+- [ ] Power loss during download (NVS pending cleared before flash — no loop; retries normally)
+- [ ] WiFi fails in OTA mode (pending cleared, reboots to normal operation)
+- [ ] Client retry limit: 3 failures for same firmware → OTA skipped, normal operation resumes
+- [ ] Different firmware offered after failures → retry counter resets
+- [ ] Invalid firmware rejected (checksum mismatch)
 - [ ] Corrupted download (checksum fails)
 - [ ] Firmware too large (error handled)
 
