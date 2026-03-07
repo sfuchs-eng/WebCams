@@ -424,7 +424,9 @@ bool OTAManager::sendConfirmation(const String& serverUrl, const String& authTok
     Serial.println("[OTA] Sending confirmation to server");
     
     // Build confirmation URL from base URL
-    String confirmUrl = buildFullUrl(serverUrl, "/ota-confirm.php");
+    // Use relative path (no leading '/') so buildFullUrl appends to the full serverUrl
+    // including any subdirectory (e.g. https://host.com/cameras/ota-confirm.php)
+    String confirmUrl = buildFullUrl(serverUrl, "ota-confirm.php");
     
     Serial.printf("[OTA] Confirmation URL: %s\n", confirmUrl.c_str());
     

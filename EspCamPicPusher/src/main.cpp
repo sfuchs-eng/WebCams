@@ -967,19 +967,22 @@ bool captureAndPostImage() {
             Serial.println("✓ Image uploaded successfully!");
             success = true;
             
-            // Check for OTA available
-            if (otaManager.isOtaAvailable(response)) {
+            // If validation pending, confirm OTA first — BEFORE checking for new OTA.
+            // Without this guard the server still sees ota_scheduled set and would
+            // offer the same firmware again, sending the device into an OTA loop
+            // before validateOtaUpdate() ever runs.
+            if (otaValidationPending) {
+                validateOtaUpdate();
+            }
+
+            // Check for OTA available (only when not in a validation cycle)
+            if (!otaValidationPending && otaManager.isOtaAvailable(response)) {
                 Serial.println("\n[OTA] Update available in server response");
                 
                 // handleOtaUpdate saves OTA info to NVS and reboots into
                 // dedicated OTA mode (no camera, no web server, no AsyncTCP).
                 // This call does not return — the device will restart.
                 handleOtaUpdate(response);
-            }
-            
-            // If validation pending and capture successful, confirm OTA
-            if (otaValidationPending) {
-                validateOtaUpdate();
             }
         } else {
             Serial.println("✗ Upload failed with HTTP error");
@@ -1072,21 +1075,30 @@ void validateOtaUpdate() {
         // Clear any leftover OTA data from NVS
         otaManager.clearPendingUpdate();
         otaManager.clearOtaFailures();
-        otaManager.clearConfirmInfo();
+        // Note: clearConfirmInfo() is called AFTER sendConfirmation() succeeds
+        // so that a network failure doesn't prevent retrying the confirmation.
         
         // Send success confirmation to server
-        otaManager.sendConfirmation(configManager.getServerUrl(),
+        bool confirmSent = otaManager.sendConfirmation(configManager.getServerUrl(),
                                    configManager.getAuthToken(),
                                    WiFi.macAddress(),
                                    true,
                                    pendingOtaFirmwareFile,
                                    "");
         
-        // Log success via RemoteLogger (now safe, normal boot)
-        RemoteLogger::info("OTA", "Update validated and confirmed");
-        
-        otaValidationPending = false;
-        pendingOtaFirmwareFile = "";
+        if (confirmSent) {
+            otaManager.clearConfirmInfo();
+            Serial.println("[OTA] Confirmation sent and NVS cleared");
+            RemoteLogger::info("OTA", "Update validated and confirmed");
+            otaValidationPending = false;
+            pendingOtaFirmwareFile = "";
+        } else {
+            Serial.println("[OTA] WARNING: Confirmation send failed — will retry on next capture");
+            // Leave otaValidationPending = true and pendingOtaFirmwareFile set so
+            // the next successful capture calls validateOtaUpdate() again.
+            // confirmUpdate() / esp_ota_mark_app_valid_cancel_rollback() is idempotent.
+            RemoteLogger::warn("OTA", "Confirmation send failed, will retry");
+        }
     } else {
         Serial.println("[OTA] Validation failed - rollback will occur on next reboot");
         RemoteLogger::error("OTA", "Update validation failed, rollback pending");

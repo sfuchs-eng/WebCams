@@ -285,6 +285,14 @@ function getOtaSchedule(string $deviceId): ?array {
                 $firmwareInfo = getFirmwareInfo($firmwareFile);
                 
                 if ($firmwareInfo) {
+                    // Safety guard: don't re-offer OTA if the device already runs
+                    // the target version (e.g. after OTA loop caused by stale schedule).
+                    $currentVersion = $camera['firmware_version'] ?? '';
+                    if (!empty($currentVersion) && $currentVersion === $firmwareInfo['version']) {
+                        logOta("OTA not offered to $deviceId: device already on target version $currentVersion — clearing stale schedule");
+                        clearOtaSchedule($deviceId);
+                        return null;
+                    }
                     return $firmwareInfo;
                 }
             }
@@ -402,15 +410,19 @@ function updateOtaStatus(string $deviceId, string $status, ?string $error = null
             }
             
             // Update firmware version on success and clear schedule
-            if ($status === 'success' && $version) {
-                $cameras[$key]['firmware_version'] = $version;
+            if ($status === 'success') {
+                // Always clear schedule and reset counter on any success confirmation
                 $cameras[$key]['ota_scheduled'] = null;
-                $cameras[$key]['ota_retry_count'] = 0; // Reset counter on success
+                $cameras[$key]['ota_retry_count'] = 0;
+                // Only update firmware_version if the version string was provided
+                if ($version) {
+                    $cameras[$key]['firmware_version'] = $version;
+                }
                 
                 $result = saveCamerasConfig($cameras);
                 if ($result) {
                     logOta("OTA successful for device $deviceId", [
-                        'new_version' => $version
+                        'new_version' => $version ?? 'unknown'
                     ]);
                 }
                 return $result;

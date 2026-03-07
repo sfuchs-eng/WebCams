@@ -867,7 +867,6 @@ String WebConfigServer::generateHtmlPage() {
             fetch('/status')
                 .then(r => r.json())
                 .then(data => {
-                    document.getElementById('firmwareVersion').textContent = data.firmwareVersion || '-';
                     document.getElementById('macAddress').textContent = data.macAddress;
                 });
         }
@@ -897,6 +896,7 @@ String WebConfigServer::generateHtmlPage() {
                     document.getElementById('countdown').textContent = 
                         `⏱️ ${minutes}:${seconds.toString().padStart(2, '0')}`;
                     
+                    document.getElementById('firmwareVersion').textContent = data.firmwareVersion || '-';
                     document.getElementById('localTime').textContent = data.localTime || '-';
                     document.getElementById('rssi').textContent = data.rssi;
                     document.getElementById('freeHeap').textContent = data.freeHeap.toLocaleString();
