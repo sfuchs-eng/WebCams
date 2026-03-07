@@ -164,8 +164,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         
         <script>
             async function deleteFirmware(filename) {
-                if (!confirm('Delete firmware "' + filename + '"? This cannot be undone.')) return;
-                
                 const formData = new FormData();
                 formData.append('action', 'delete_firmware');
                 formData.append('filename', filename);

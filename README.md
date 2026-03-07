@@ -2,6 +2,8 @@
 
 The WebCams project aims to use a simple web-hosted PHP application to receive and display images captured by multiple camera devices based on either ESP32 (e.g. XIAO ESP32S3 Sense) or a Raspberry Pi (e.g. Raspberry Pi Zero W with a camera module).
 
+New firmware updates can be OTA pushed to the ESP32 devices from the same web application, allowing for easy maintenance and feature updates without physical access to the devices.
+
 The project consists of three main components:
 
 - **WebCamPics**: A PHP application that receives the images from an arbitrary number of EspCamPicPusher devices and displays them in a web interface. It also provides an API endpoint for receiving image uploads. For details see the [WebCamPics README](WebCamPics/README.md).

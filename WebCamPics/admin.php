@@ -632,10 +632,6 @@ foreach ($camerasConfig as $key => $cameraData) {
         function clearOtaSchedule() {
             const mac = document.getElementById('edit_mac').value;
             
-            if (!confirm('Clear the scheduled OTA update for this camera?')) {
-                return;
-            }
-            
             const formData = new FormData();
             formData.append('action', 'schedule_ota');
             formData.append('mac', mac);
@@ -651,7 +647,6 @@ foreach ($camerasConfig as $key => $cameraData) {
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    alert('OTA schedule cleared successfully!');
                     location.reload();
                 } else {
                     alert('Failed to clear OTA schedule');
