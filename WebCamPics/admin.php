@@ -81,6 +81,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Determine if identifier is a MAC address
                 $isMac = preg_match('/^[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}[:-]?[0-9A-Fa-f]{2}$/', $identifier);
                 
+                // Preserve existing OTA/firmware metadata so a save never wipes them
+                $existing = $cameras[$key] ?? [];
+                $otaFields = [
+                    'firmware_version', 'ota_scheduled', 'ota_retry_count',
+                    'ota_last_status', 'ota_last_error', 'ota_last_attempt',
+                    'image_count'
+                ];
+                
                 // Always save device_id, and mac field for backward compatibility if it's a MAC
                 $cameras[$key] = [
                     'device_id' => $identifier,
@@ -94,6 +102,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'font_color' => $_POST['font_color'],
                     'font_outline' => isset($_POST['font_outline'])
                 ];
+                
+                // Restore OTA/firmware fields from existing entry
+                foreach ($otaFields as $field) {
+                    if (array_key_exists($field, $existing)) {
+                        $cameras[$key][$field] = $existing[$field];
+                    }
+                }
                 
                 // Add mac field for backward compatibility if it's a MAC address
                 if ($isMac) {
@@ -497,7 +512,33 @@ foreach ($camerasConfig as $key => $cameraData) {
             
             // Populate OTA info
             document.getElementById('edit_firmware_version').textContent = camera.firmware_version || 'Unknown';
-            document.getElementById('edit_ota_firmware').value = camera.ota_scheduled || '';
+            
+            // Dynamically load firmware list from server
+            const fwSelect = document.getElementById('edit_ota_firmware');
+            const scheduledFirmware = camera.ota_scheduled || '';
+            fwSelect.innerHTML = '<option value="" disabled>Loading firmware list…</option>';
+            
+            fetch('<?= baseUrl('ota-upload.php') ?>', {
+                headers: { 'Accept': 'application/json' }
+            })
+            .then(r => r.json())
+            .then(data => {
+                fwSelect.innerHTML = '<option value="">-- No update scheduled --</option>';
+                if (data.firmware && data.firmware.length > 0) {
+                    data.firmware.forEach(fw => {
+                        const sizeMb = (fw.size / 1024 / 1024).toFixed(2);
+                        const opt = new Option('v' + fw.version + ' (' + sizeMb + ' MB)', fw.filename);
+                        fwSelect.appendChild(opt);
+                    });
+                }
+                fwSelect.value = scheduledFirmware;
+            })
+            .catch(() => {
+                // Restore static placeholder on failure
+                fwSelect.innerHTML = '<option value="">-- No update scheduled --</option>' +
+                    '<option value="" disabled style="color:#c00;">⚠ Failed to load firmware list — please reload page</option>';
+                fwSelect.value = scheduledFirmware;
+            });
             
             // Update OTA status display
             let statusHtml = 'No updates scheduled';

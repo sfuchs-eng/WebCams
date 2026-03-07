@@ -14,6 +14,31 @@ require_once __DIR__ . '/lib/path.php';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json');
     
+    // Handle firmware deletion
+    if (isset($_POST['action']) && $_POST['action'] === 'delete_firmware') {
+        $filename = trim($_POST['filename'] ?? '');
+        if (empty($filename)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'No filename provided']);
+            exit;
+        }
+        
+        $scheduledCount = countCamerasWithFirmware($filename);
+        if ($scheduledCount > 0) {
+            http_response_code(409);
+            echo json_encode(['success' => false, 'error' => "Cannot delete: firmware is scheduled for {$scheduledCount} camera(s)."]);
+            exit;
+        }
+        
+        if (deleteFirmware($filename)) {
+            echo json_encode(['success' => true]);
+        } else {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'Failed to delete firmware file']);
+        }
+        exit;
+    }
+    
     // Check if file was uploaded
     if (!isset($_FILES['firmware'])) {
         http_response_code(400);
@@ -107,24 +132,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                     <th>Size</th>
                     <th>Uploaded</th>
                     <th>SHA256</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 <?php
                 $firmware = getAvailableFirmware();
                 if (empty($firmware)) {
-                    echo '<tr><td colspan="5">No firmware files available</td></tr>';
+                    echo '<tr><td colspan="6">No firmware files available</td></tr>';
                 } else {
                     foreach ($firmware as $fw) {
                         $size = number_format($fw['size'] / 1024 / 1024, 2) . ' MB';
                         $uploaded = date('Y-m-d H:i', strtotime($fw['uploaded']));
                         $sha256Short = substr($fw['sha256'], 0, 16) . '...';
-                        echo "<tr>";
+                        $fnEsc = htmlspecialchars(addslashes($fw['filename']), ENT_QUOTES);
+                        echo "<tr id='fw-row-" . htmlspecialchars($fw['filename']) . "'>";
                         echo "<td>{$fw['filename']}</td>";
                         echo "<td>{$fw['version']}</td>";
                         echo "<td>{$size}</td>";
                         echo "<td>{$uploaded}</td>";
                         echo "<td title='{$fw['sha256']}'>{$sha256Short}</td>";
+                        echo "<td><button onclick=\"deleteFirmware('{$fnEsc}')\" style='background:#dc3545;color:white;border:none;padding:4px 10px;border-radius:3px;cursor:pointer;'>Delete</button></td>";
                         echo "</tr>";
                     }
                 }
@@ -135,6 +163,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         <p><a href="<?= baseUrl('admin.php') ?>">← Back to Admin</a></p>
         
         <script>
+            async function deleteFirmware(filename) {
+                if (!confirm('Delete firmware "' + filename + '"? This cannot be undone.')) return;
+                
+                const formData = new FormData();
+                formData.append('action', 'delete_firmware');
+                formData.append('filename', filename);
+                
+                try {
+                    const response = await fetch(window.location.href, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        const row = document.getElementById('fw-row-' + filename);
+                        if (row) row.remove();
+                        const tbody = document.querySelector('#firmwareTable tbody');
+                        if (tbody && tbody.querySelectorAll('tr').length === 0) {
+                            tbody.innerHTML = '<tr><td colspan="6">No firmware files available</td></tr>';
+                        }
+                    } else {
+                        alert('Delete failed: ' + (result.error || 'Unknown error'));
+                    }
+                } catch (error) {
+                    alert('Delete failed: ' + error.message);
+                }
+            }
+            
             document.getElementById('uploadForm').addEventListener('submit', async function(e) {
                 e.preventDefault();
                 

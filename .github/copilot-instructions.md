@@ -74,11 +74,14 @@ CameraMutex::unlock();
 - PHP: Modular `lib/` utilities (snake_case functions)
 - C++: Library classes in `lib/{ComponentName}/` (PascalCase classes, camelCase methods)
 - Config: PHP uses JSON, ESP32 uses NVS with compiled defaults
-- Specs and reports per project built with AI in `../<project>/AI/Specs/` and `../<project>/AI/Reports/` (markdown format)
+- Specs and reports per project built with AI in `../<project>/AI/Specs/` and `../<project>/AI/Reports/` (markdown format). Ensure files are updated with implementation details and linked in this overview.
 
 **Path Sanitization**: Device IDs converted to filesystem-safe names (MAC colons→hyphens, whitelist `[a-zA-Z0-9_-]`, 3-64 chars). See [storage.php](WebCamPics/lib/storage.php#L14-L49).
 
-**Testing Strategy**: Bash scripts with curl for API testing. Serial monitor + LED feedback for ESP32. Manual web UI testing before deployment.
+**Testing Strategy**: Bash scripts with curl for API testing. Serial monitor for ESP32. Manual web UI testing directly on production environment.
+
+**Backwards Compatibility**: Maintain legacy multipart/form-data API alongside new raw binary API. Same tokens work for both. Admin panel shows tokens regardless of API used. The legacy API is still supported for existing users and devices, but new implementations should use the raw binary API for efficiency and simplicity. See [upload.php](WebCamPics/upload.php) for dual handling logic. The legacy API must remain backwards compatible and fully functional.
+The new raw binary API does not require backwards compatiblity yet.
 
 ## Integration Points
 
