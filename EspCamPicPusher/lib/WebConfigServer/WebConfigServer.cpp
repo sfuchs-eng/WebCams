@@ -193,64 +193,15 @@ void WebConfigServer::handlePostConfig(AsyncWebServerRequest* request, uint8_t* 
         }
     }
     
-    // If in AP mode and WiFi credentials changed, test them first
-    if (isApMode && wifiChanged) {
-        Serial.println("WiFi credentials changed, testing connection...");
-        
-        // Test the connection
-        WiFi.begin(newSsid.c_str(), newPassword == "********" ? configManager->getWifiPassword() : newPassword.c_str());
-        
-        int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-            delay(500);
-            Serial.print(".");
-            attempts++;
-        }
-        Serial.println();
-        
-        if (WiFi.status() == WL_CONNECTED) {
-            Serial.println("WiFi test successful!");
-            Serial.printf("Connected to %s\n", newSsid.c_str());
-            Serial.printf("IP: %s\n", WiFi.localIP().toString().c_str());
-            
-            // Connection successful, save config and reboot
-            if (configManager->loadFromJson(body.c_str())) {
-                if (configManager->save()) {
-                    // Send success response with reboot flag
-                    request->send(200, "application/json", "{\"success\":true,\"message\":\"WiFi connected! Rebooting in 3 seconds...\",\"rebooting\":true}");
-                    
-                    // Reboot after a delay
-                    delay(3000);
-                    ESP.restart();
-                    return;
-                } else {
-                    request->send(500, "application/json", "{\"success\":false,\"message\":\"Failed to save configuration\"}");
-                    return;
-                }
-            } else {
-                request->send(400, "application/json", "{\"success\":false,\"message\":\"Invalid configuration\"}");
-                return;
-            }
-        } else {
-            // Connection failed
-            Serial.println("WiFi test failed!");
-            request->send(400, "application/json", "{\"success\":false,\"message\":\"WiFi connection test failed. Please check credentials.\"}");
-            
-            // Try to reconnect to original WiFi if in AP+STA mode
-            String originalSsid = String(configManager->getWifiSsid());
-            if (originalSsid.length() > 0) {
-                Serial.printf("Attempting to reconnect to original WiFi: %s\n", originalSsid.c_str());
-                WiFi.begin(originalSsid.c_str(), configManager->getWifiPassword());
-            }
-            return;
-        }
-    }
-    
-    // Normal config save (no WiFi change or not in AP mode)
+    // Save config unconditionally — WiFi testing is separate (use /config/test)
     if (configManager->loadFromJson(body.c_str())) {
         // Save to NVS
         if (configManager->save()) {
-            request->send(200, "application/json", "{\"success\":true,\"message\":\"Configuration saved\"}");
+            if (isApMode && wifiChanged) {
+                request->send(200, "application/json", "{\"success\":true,\"message\":\"Configuration saved. Reboot to apply new WiFi settings.\"}");
+            } else {
+                request->send(200, "application/json", "{\"success\":true,\"message\":\"Configuration saved\"}");
+            }
         } else {
             request->send(500, "application/json", "{\"success\":false,\"message\":\"Failed to save configuration\"}");
         }
@@ -327,26 +278,11 @@ void WebConfigServer::handleTestConfig(AsyncWebServerRequest* request, uint8_t* 
             }
         }
         
-        // Different credentials in STA mode - save and tell user to reboot
-        Serial.println("WiFi credentials changed in STA mode, saving configuration");
-        
-        // Update config with new credentials
-        if (configManager->loadFromJson(body.c_str())) {
-            if (configManager->save()) {
-                Serial.println("Configuration saved, reboot required");
-                request->send(200, "application/json", 
-                    "{\"success\":true,\"connected\":false,\"message\":\"Configuration saved. Please reboot to apply WiFi changes.\",\"needsReboot\":true}");
-                return;
-            } else {
-                request->send(500, "application/json", 
-                    "{\"success\":false,\"connected\":false,\"message\":\"Failed to save configuration\"}");
-                return;
-            }
-        } else {
-            request->send(400, "application/json", 
-                "{\"success\":false,\"connected\":false,\"message\":\"Invalid configuration\"}");
-            return;
-        }
+        // Different credentials in STA mode - live testing not available, advise user to save and reboot
+        Serial.println("WiFi credentials changed in STA mode, live testing not available");
+        request->send(200, "application/json",
+            "{\"success\":false,\"connected\":false,\"message\":\"Live WiFi testing is only available in AP mode. Save the configuration and reboot to apply new credentials.\",\"staMode\":true}");
+        return;
     }
     
     // In AP mode - test the connection live
