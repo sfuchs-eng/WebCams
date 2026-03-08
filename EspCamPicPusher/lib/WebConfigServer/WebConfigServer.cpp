@@ -710,6 +710,11 @@ String WebConfigServer::generateHtmlPage() {
                     <label>Password:</label>
                     <input type="password" id="wifiPassword" placeholder="Leave blank to keep current">
                 </div>
+                <div class="form-group">
+                    <label>Hostname:</label>
+                    <input type="text" id="hostname" placeholder="Leave blank for auto (espcam-xxxx)" maxlength="31">
+                    <small style="color:#888;">Announced to DHCP server and mDNS (.local). Letters, digits and hyphens only.</small>
+                </div>
                 <div id="wifiTestResult" class="message" style="display:none;"></div>
                 <button class="btn btn-secondary btn-small" onclick="testWiFiConfig()">🔍 Test WiFi Connection</button>
             </div>
@@ -763,14 +768,20 @@ String WebConfigServer::generateHtmlPage() {
             <!-- Web Authentication -->
             <div class="section">
                 <h2>🔒 Web Authentication</h2>
-                <p style="font-size: 12px; color: #666; margin-bottom: 10px;">Leave password empty to disable authentication</p>
+                <p style="font-size: 12px; color: #666; margin-bottom: 10px;">Leave password empty to keep current. Set a new password to enable protection.</p>
                 <div class="form-group">
                     <label>Username:</label>
                     <input type="text" id="webUsername" placeholder="admin">
                 </div>
                 <div class="form-group">
                     <label>Password:</label>
-                    <input type="password" id="webPassword" placeholder="Leave blank to keep current or disable auth">
+                    <input type="password" id="webPassword" placeholder="Leave blank to keep current">
+                </div>
+                <div class="form-group" id="clearPasswordGroup" style="display:none;">
+                    <label style="color: #dc3545; font-weight: bold; cursor: pointer;">
+                        <input type="checkbox" id="clearWebPassword" style="margin-right: 6px;">
+                        Remove password protection (make web UI publicly accessible)
+                    </label>
                 </div>
             </div>
 
@@ -861,6 +872,7 @@ String WebConfigServer::generateHtmlPage() {
                     document.getElementById('wifiSsid').value = config.wifiSsid || '';
                     // Don't populate password fields - keep them empty for security
                     document.getElementById('wifiPassword').placeholder = 'Current: ' + (config.wifiPassword === '********' ? 'Configured' : 'Not set');
+                    document.getElementById('hostname').value = config.hostname || '';
                     document.getElementById('serverUrl').value = config.serverUrl || '';
                     document.getElementById('authToken').placeholder = 'Current: ' + (config.authToken === '********' ? 'Configured' : 'Not set');
                     document.getElementById('gmtOffsetSec').value = config.gmtOffsetSec || 3600;
@@ -870,10 +882,14 @@ String WebConfigServer::generateHtmlPage() {
                     
                     // Load web authentication
                     document.getElementById('webUsername').value = config.webUsername || '';
-                    document.getElementById('webPassword').placeholder = 'Current: ' + (config.webPassword === '********' ? 'Set' : 'Not set');
+                    const pwdSet = config.webPassword === '********';
+                    document.getElementById('webPassword').placeholder = 'Current: ' + (pwdSet ? 'Set' : 'Not set');
+                    // Show "clear" checkbox only when a password is currently set
+                    document.getElementById('clearPasswordGroup').style.display = pwdSet ? '' : 'none';
+                    document.getElementById('clearWebPassword').checked = false;
                     
                     // Check if auth is required
-                    authRequired = config.webPassword === '********';
+                    authRequired = pwdSet;
                     checkAuthStatus();
                     
                     schedule = config.schedule || [];
@@ -984,9 +1000,16 @@ String WebConfigServer::generateHtmlPage() {
         }
 
         function saveConfig() {
+            const clearPwd = document.getElementById('clearWebPassword').checked;
+            if (clearPwd) {
+                if (!confirm('This will remove password protection from the web UI, making it publicly accessible. Continue?')) {
+                    return;
+                }
+            }
             const config = {
                 wifiSsid: document.getElementById('wifiSsid').value,
                 wifiPassword: document.getElementById('wifiPassword').value,
+                hostname: document.getElementById('hostname').value,
                 serverUrl: document.getElementById('serverUrl').value,
                 authToken: document.getElementById('authToken').value,
                 gmtOffsetSec: parseInt(document.getElementById('gmtOffsetSec').value),
@@ -997,6 +1020,10 @@ String WebConfigServer::generateHtmlPage() {
                 webUsername: document.getElementById('webUsername').value,
                 webPassword: document.getElementById('webPassword').value
             };
+            if (clearPwd) {
+                config.clearWebPassword = true;
+                config.webPassword = '';
+            }
 
             fetch('/config', {
                 method: 'POST',

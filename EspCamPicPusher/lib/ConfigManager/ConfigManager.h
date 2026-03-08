@@ -11,6 +11,7 @@
 #define MAX_URL_LENGTH 256
 #define MAX_TOKEN_LENGTH 128
 #define MAX_USERNAME_LENGTH 32
+#define MAX_HOSTNAME_LENGTH 32
 
 // Configuration structure
 struct AppConfig {
@@ -40,6 +41,9 @@ struct AppConfig {
     // Web authentication
     char webUsername[MAX_USERNAME_LENGTH];
     char webPassword[MAX_PASSWORD_LENGTH];
+    
+    // Network identity
+    char hostname[MAX_HOSTNAME_LENGTH];
     
     // Validation flag
     bool isValid;
@@ -79,6 +83,7 @@ public:
     int getSleepMarginSec() { return config.sleepMarginSec; }
     const char* getWebUsername() { return config.webUsername; }
     const char* getWebPassword() { return config.webPassword; }
+    const char* getHostname() { return config.hostname; }
     
     // Get entire config structure
     AppConfig& getConfig() { return config; }
@@ -94,6 +99,7 @@ public:
     void setSleepMarginSec(int margin) { config.sleepMarginSec = margin; }
     void setWebUsername(const char* username);
     void setWebPassword(const char* password);
+    void setHostname(const char* name);
     
     // Schedule management
     void clearSchedule();

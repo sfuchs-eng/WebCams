@@ -78,6 +78,9 @@ void ConfigManager::loadDefaults() {
     config.webUsername[0] = '\0';
     config.webPassword[0] = '\0';
     
+    // Hostname default: empty = auto-generate from MAC at runtime
+    config.hostname[0] = '\0';
+    
     config.isValid = true;
 }
 
@@ -123,6 +126,9 @@ bool ConfigManager::load() {
     prefs.getString("webUsername", config.webUsername, MAX_USERNAME_LENGTH);
     prefs.getString("webPassword", config.webPassword, MAX_PASSWORD_LENGTH);
     
+    // Load network identity
+    prefs.getString("hostname", config.hostname, MAX_HOSTNAME_LENGTH);
+    
     // Validate loaded configuration
     if (!validateConfig()) {
         Serial.println("Loaded config validation failed");
@@ -166,6 +172,9 @@ bool ConfigManager::save() {
     // Save web authentication
     prefs.putString("webUsername", config.webUsername);
     prefs.putString("webPassword", config.webPassword);
+    
+    // Save network identity
+    prefs.putString("hostname", config.hostname);
     
     Serial.println("Configuration saved to NVS");
     return true;
@@ -279,6 +288,11 @@ void ConfigManager::setWebPassword(const char* password) {
     config.webPassword[MAX_PASSWORD_LENGTH - 1] = '\0';
 }
 
+void ConfigManager::setHostname(const char* name) {
+    strncpy(config.hostname, name, MAX_HOSTNAME_LENGTH - 1);
+    config.hostname[MAX_HOSTNAME_LENGTH - 1] = '\0';
+}
+
 void ConfigManager::clearSchedule() {
     config.numCaptureTimes = 0;
 }
@@ -381,12 +395,20 @@ bool ConfigManager::loadFromJson(const char* jsonStr) {
     if (doc.containsKey("webUsername")) {
         setWebUsername(doc["webUsername"]);
     }
-    if (doc.containsKey("webPassword")) {
+    // Handle explicit password clear request
+    if (doc.containsKey("clearWebPassword") && doc["clearWebPassword"] == true) {
+        setWebPassword("");
+    } else if (doc.containsKey("webPassword")) {
         const char* pwd = doc["webPassword"];
         // Only update if not empty and not the masked placeholder
         if (pwd && strlen(pwd) > 0 && strcmp(pwd, "********") != 0) {
             setWebPassword(pwd);
         }
+    }
+    
+    // Load network identity
+    if (doc.containsKey("hostname")) {
+        setHostname(doc["hostname"]);
     }
     
     return validateConfig();
@@ -419,6 +441,8 @@ String ConfigManager::toJson() {
     doc["webUsername"] = config.webUsername;
     // Don't include password in JSON export for security
     doc["webPassword"] = strlen(config.webPassword) > 0 ? "********" : "";
+    
+    doc["hostname"] = config.hostname;
     
     String output;
     serializeJson(doc, output);
