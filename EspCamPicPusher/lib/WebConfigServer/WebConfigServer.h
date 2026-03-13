@@ -65,6 +65,17 @@ public:
      * @param apMode True if in AP+STA mode
      */
     void setApMode(bool apMode);
+
+    // --- Decoupled-capture helpers (called from the main loop) ---
+
+    /** Returns true if the web UI has queued a capture-and-push operation. */
+    bool isCaptureRequested() { return captureRequested; }
+
+    /** Clear the request flag and mark result as pending. Call before starting work. */
+    void ackCaptureRequest() { captureRequested = false; captureResult = 0; }
+
+    /** Store the result so /capture/result can return it to the browser. */
+    void setCaptureResult(bool success) { captureResult = success ? 1 : 2; }
     
 private:
     AsyncWebServer* server;
@@ -75,7 +86,13 @@ private:
     bool cameraReady;
     CaptureCallback captureCallback;
     bool isApMode;
-    
+
+    // Decoupled capture-request state.
+    // Written by the async-web-server task (Core 0), read by the main loop (Core 1).
+    // -1 = idle, 0 = pending (queued, not yet done), 1 = success, 2 = failed.
+    volatile bool captureRequested;
+    volatile int  captureResult;
+
     // Setup HTTP endpoints
     void setupRoutes();
     
@@ -85,6 +102,7 @@ private:
     void handlePostConfig(AsyncWebServerRequest* request, uint8_t* data, size_t len);
     void handleTestConfig(AsyncWebServerRequest* request, uint8_t* data, size_t len);
     void handleCapture(AsyncWebServerRequest* request);
+    void handleCaptureResult(AsyncWebServerRequest* request);
     void handlePreview(AsyncWebServerRequest* request);
     void handleStatus(AsyncWebServerRequest* request);
     void handleAuthCheck(AsyncWebServerRequest* request);

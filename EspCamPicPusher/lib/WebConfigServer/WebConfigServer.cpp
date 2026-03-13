@@ -15,6 +15,8 @@ WebConfigServer::WebConfigServer(ConfigManager* configMgr, int port) {
     timeoutMillis = 0;
     cameraReady = false;
     isApMode = false;
+    captureRequested = false;
+    captureResult = -1;
 }
 
 WebConfigServer::~WebConfigServer() {
@@ -100,11 +102,17 @@ void WebConfigServer::setupRoutes() {
         }
     );
     
-    // Trigger image capture and upload
+    // Trigger image capture and upload (returns 202 immediately; work done in main loop)
     server->on("/capture", HTTP_GET, [this](AsyncWebServerRequest* request) {
         this->logRequest(request);
         this->resetActivityTimer();
         this->handleCapture(request);
+    });
+
+    // Poll for capture result set by main loop
+    server->on("/capture/result", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        this->logRequest(request);
+        this->handleCaptureResult(request);
     });
     
     // Get image preview
@@ -332,19 +340,44 @@ void WebConfigServer::handleCapture(AsyncWebServerRequest* request) {
         request->send(503, "application/json", "{\"success\":false,\"message\":\"Camera not ready\"}");
         return;
     }
-    
+
     if (!captureCallback) {
         request->send(500, "application/json", "{\"success\":false,\"message\":\"Capture callback not set\"}");
         return;
     }
-    
-    // Trigger the capture and upload via callback
-    bool success = captureCallback();
-    
-    if (success) {
-        request->send(200, "application/json", "{\"success\":true,\"message\":\"Image captured and uploaded successfully\"}");
+
+    // Reject if a capture is already in progress.
+    if (captureRequested || captureResult == 0) {
+        request->send(409, "application/json", "{\"queued\":false,\"message\":\"Capture already in progress\"}");
+        return;
+    }
+
+    // Queue the capture. The actual blocking work (camera warm-up + HTTPClient POST)
+    // is performed by the main loop so the AsyncWebServer TCP stack is never blocked.
+    captureResult = -1;
+    captureRequested = true;
+
+    request->send(202, "application/json", "{\"queued\":true}");
+}
+
+void WebConfigServer::handleCaptureResult(AsyncWebServerRequest* request) {
+    int result = captureResult;  // read volatile once
+
+    if (result == 0) {
+        // Still being processed by main loop.
+        request->send(200, "application/json", "{\"pending\":true}");
+    } else if (result == 1) {
+        captureResult = -1;  // consume
+        request->send(200, "application/json",
+            "{\"pending\":false,\"success\":true,\"message\":\"Image captured and uploaded successfully\"}");
+    } else if (result == 2) {
+        captureResult = -1;  // consume
+        request->send(200, "application/json",
+            "{\"pending\":false,\"success\":false,\"message\":\"Capture or upload failed\"}");
     } else {
-        request->send(500, "application/json", "{\"success\":false,\"message\":\"Capture or upload failed\"}");
+        // Idle — no capture was queued or result already consumed.
+        request->send(200, "application/json",
+            "{\"pending\":false,\"success\":false,\"message\":\"No pending capture\"}");
     }
 }
 
@@ -789,7 +822,7 @@ String WebConfigServer::generateHtmlPage() {
             <div class="section">
                 <h2>📸 Manual Capture</h2>
                 <button class="btn btn-success" onclick="capturePreview()">📷 Capture & Preview</button>
-                <button class="btn btn-primary" onclick="captureAndPush()" style="margin-left: 10px;">📤 Capture & Push to Server</button>
+                <button class="btn btn-primary" onclick="captureAndPush(this)" style="margin-left: 10px;">📤 Capture & Push to Server</button>
                 <div class="preview-container" id="previewContainer"></div>
             </div>
 
@@ -1138,20 +1171,52 @@ String WebConfigServer::generateHtmlPage() {
                 });
         }
         
-        function captureAndPush() {
-            showMessage('Capturing and uploading...');
-            
+        function captureAndPush(btn) {
+            // Fire-and-poll: /capture queues the work on the main loop and returns
+            // immediately (202). We then poll /capture/result until done.
+            // This avoids blocking the AsyncWebServer TCP stack with a synchronous
+            // HTTPClient POST, which caused "Failed to fetch" (TypeError) errors.
+            btn.disabled = true;
+            showMessage('\u23f3 Queuing capture...');
+
             fetch('/capture')
                 .then(r => r.json())
                 .then(data => {
-                    if (data.success) {
-                        showMessage('✓ ' + data.message);
-                    } else {
-                        showMessage('✗ ' + data.message, true);
+                    if (!data.queued) {
+                        showMessage('\u2717 ' + (data.message || 'Failed to queue'), true);
+                        btn.disabled = false;
+                        return;
                     }
+                    showMessage('\u23f3 Capturing and uploading...');
+                    let attempts = 0;
+                    function poll() {
+                        if (attempts++ > 60) {
+                            showMessage('\u2717 Capture timed out', true);
+                            btn.disabled = false;
+                            return;
+                        }
+                        setTimeout(() => {
+                            fetch('/capture/result')
+                                .then(r => r.json())
+                                .then(d => {
+                                    if (d.pending) {
+                                        poll();
+                                    } else if (d.success) {
+                                        showMessage('\u2713 ' + (d.message || 'Captured and uploaded!'));
+                                        btn.disabled = false;
+                                    } else {
+                                        showMessage('\u2717 ' + (d.message || 'Capture or upload failed'), true);
+                                        btn.disabled = false;
+                                    }
+                                })
+                                .catch(() => poll()); // retry on transient network error
+                        }, 1000);
+                    }
+                    poll();
                 })
                 .catch(err => {
-                    showMessage('✗ Request failed: ' + err, true);
+                    showMessage('\u2717 Request failed: ' + err, true);
+                    btn.disabled = false;
                 });
         }
 

@@ -250,6 +250,11 @@ void setup() {
             sleepManager.setLastNtpSync(time(nullptr));
         } else {
             Serial.println("Using RTC time (NTP sync not required)");
+            // Deep sleep wipes the POSIX TZ env var from RAM even though the RTC
+            // hardware counter survives. Calling configTime() with an empty NTP
+            // server string restores the TZ offset without issuing any NTP request,
+            // so getLocalTime() returns the correct local time for X-Timestamp.
+            configTime(configManager.getGmtOffsetSec(), configManager.getDaylightOffsetSec(), "");
         }
         
         // Initialize OTA manager
@@ -598,6 +603,28 @@ void updateTime() {
 // ============================================================================
 
 void runConfigMode() {
+    // Check for a capture queued by the async web handler.
+    // Placed before the 1-second throttle so it triggers within ~100 ms.
+    // The actual blocking work (camera warm-up + outbound HTTPS POST) must run
+    // here on the main loop — never inside an AsyncWebServer callback — so the
+    // ESP32 TCP stack is never blocked while keeping the browser connection open.
+    if (webServer && webServer->isCaptureRequested()) {
+        webServer->ackCaptureRequest();
+        Serial.println("\n=== Manual capture requested via web UI ===");
+        bool success = captureAndPostImage();
+        webServer->setCaptureResult(success);
+        if (success) {
+            Serial.println("✓ Manual capture successful!");
+            sleepManager.resetFailedCaptures();
+            blinkLED(2, 100);
+        } else {
+            Serial.println("✗ Manual capture failed");
+            sleepManager.incrementFailedCaptures();
+            blinkLED(5, 50);
+        }
+        webServer->resetActivityTimer();
+    }
+
     static unsigned long lastCheck = 0;
     static unsigned long lastCaptureCheck = 0;
     static int lastCaptureMinute = -1; // Track last capture to prevent duplicates
@@ -763,6 +790,7 @@ void runCaptureMode() {
 
 void runWaitMode() {
     static unsigned long lastCheck = 0;
+    static int lastCaptureMinute = -1;  // Prevent duplicate captures within the same minute
     
     // Check every 10 seconds
     if (millis() - lastCheck < 10000) {
@@ -776,6 +804,8 @@ void runWaitMode() {
         return;
     }
     
+    int currentMinute = timeinfo.tm_hour * 60 + timeinfo.tm_min;
+    
     // Build schedule array from config
     int numTimes = configManager.getNumCaptureTimes();
     ScheduleTime schedule[MAX_CAPTURE_TIMES];
@@ -784,8 +814,10 @@ void runWaitMode() {
         schedule[i].minute = configManager.getCaptureMinute(i);
     }
     
-    // Check if it's time to capture
-    if (scheduleManager.isTimeToCapture(&timeinfo, schedule, numTimes)) {
+    // Check if it's time to capture and we haven't already captured this minute
+    if (scheduleManager.isTimeToCapture(&timeinfo, schedule, numTimes) &&
+        currentMinute != lastCaptureMinute) {
+        lastCaptureMinute = currentMinute;  // Set before upload to guard against re-entry
         Serial.println("\n=== Time to capture! ===");
         
         if (captureAndPostImage()) {
