@@ -1,0 +1,10 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "PlatformIO Build",
+			"type": "shell",
+			"command": "cd /home/sfuchs/src/WebCams/EspCamPicPusher && ~/.platformio/penv/bin/pio run"
+		}
+	]
+}
