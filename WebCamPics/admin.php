@@ -96,6 +96,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'title' => $_POST['title'],
                     'status' => $_POST['status'] ?? 'hidden',  // 3-state: disabled, hidden, enabled
                     'rotate' => intval($_POST['rotate']),
+                    'mirror' => in_array($_POST['mirror'] ?? 'none', ['none', 'horizontal', 'vertical']) ? $_POST['mirror'] : 'none',
                     'add_timestamp' => isset($_POST['add_timestamp']),
                     'add_title' => isset($_POST['add_title']),
                     'font_size' => intval($_POST['font_size']),
@@ -346,7 +347,7 @@ foreach ($camerasConfig as $key => $cameraData) {
                                 <?php elseif (!empty($camera['ota_last_status']) && $camera['ota_last_status'] === 'rollback'): ?>
                                     <p><strong>OTA Status:</strong> <span style="color: #ff9800;">⚠️ Rolled back</span></p>
                                 <?php endif; ?>
-                                <p><strong></strong>Rotation:</strong> <?php echo $camera['rotate']; ?>°</p>
+                                <p><strong>Rotation:</strong> <?php echo $camera['rotate']; ?>° / Mirror: <?php echo ucfirst($camera['mirror'] ?? 'none'); ?></p>
                                 <p><strong>Text Overlay:</strong> 
                                     <?php echo $camera['add_title'] ? '✓ Title' : '✗ Title'; ?>, 
                                     <?php echo $camera['add_timestamp'] ? '✓ Timestamp' : '✗ Timestamp'; ?>
@@ -411,6 +412,15 @@ foreach ($camerasConfig as $key => $cameraData) {
                             <option value="90">90°</option>
                             <option value="180">180°</option>
                             <option value="270">270°</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_mirror">Mirror:</label>
+                        <select id="edit_mirror" name="mirror">
+                            <option value="none">None</option>
+                            <option value="horizontal">Horizontal (flip left/right)</option>
+                            <option value="vertical">Vertical (flip top/bottom)</option>
                         </select>
                     </div>
                     
@@ -504,6 +514,7 @@ foreach ($camerasConfig as $key => $cameraData) {
             document.getElementById('edit_location').value = camera.location;
             document.getElementById('edit_status').value = camera.status || 'enabled';
             document.getElementById('edit_rotate').value = camera.rotate;
+            document.getElementById('edit_mirror').value = camera.mirror || 'none';
             document.getElementById('edit_add_title').checked = camera.add_title;
             document.getElementById('edit_add_timestamp').checked = camera.add_timestamp;
             document.getElementById('edit_font_size').value = camera.font_size;

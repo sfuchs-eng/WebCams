@@ -143,6 +143,7 @@ function getCameraConfig($identifier) {
         'title' => $isMac ? 'Camera ' . substr($identifier, -8) : $identifier,
         'status' => 'enabled',
         'rotate' => 0,
+        'mirror' => 'none',
         'add_timestamp' => true,
         'add_title' => true,
         'font_size' => 16,

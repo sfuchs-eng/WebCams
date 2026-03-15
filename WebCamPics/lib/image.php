@@ -42,6 +42,14 @@ function processImage($rawImagePath, $mac) {
         }
     }
     
+    // Apply mirror/flip if needed (after rotation so axes match final display orientation)
+    $mirror = $cameraConfig['mirror'] ?? 'none';
+    if ($mirror === 'horizontal') {
+        imageflip($image, IMG_FLIP_HORIZONTAL);
+    } elseif ($mirror === 'vertical') {
+        imageflip($image, IMG_FLIP_VERTICAL);
+    }
+    
     // Add text overlays
     if ($cameraConfig['add_title'] || $cameraConfig['add_timestamp']) {
         $fontSize = $cameraConfig['font_size'];
