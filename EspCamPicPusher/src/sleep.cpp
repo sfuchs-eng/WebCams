@@ -41,7 +41,23 @@ void enterSleepMode() {
     long sleepSeconds = scheduleManager.getSecondsUntilWake(&timeinfo, schedule, numTimes, sleepMargin);
 
     if (sleepSeconds <= 0) {
-        Serial.println("ERROR: Invalid sleep duration, restarting...");
+        // Wake time is already behind us — this happens when the device woke up
+        // sleepMarginSec seconds before the scheduled capture and completed the
+        // capture while still inside that wake window (current clock is still
+        // in the minute before the scheduled time).  Without this correction
+        // the same schedule entry would be treated as "next", the computed
+        // wake time would be in the past, and the device would restart —
+        // triggering a duplicate capture via CONFIG mode.
+        // Fix: advance past the wake window and recalculate.
+        Serial.println("Wake time is within current capture window, advancing past it...");
+        timeinfo.tm_sec += sleepMargin + 30;  // push past the entire wake window
+        mktime(&timeinfo);                    // normalize (propagates overflow into tm_min etc.)
+        sleepSeconds = scheduleManager.getSecondsUntilWake(&timeinfo, schedule, numTimes, sleepMargin);
+        Serial.printf("Recalculated sleep duration: %ld seconds\n", sleepSeconds);
+    }
+
+    if (sleepSeconds <= 0) {
+        Serial.println("ERROR: Invalid sleep duration after adjustment, restarting...");
         delay(5000);
         ESP.restart();
         return;
