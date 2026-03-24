@@ -6,6 +6,9 @@
 #include <ArduinoJson.h>
 #include <base64.h>
 
+// Forward declaration — the 30KB PROGMEM definition is at the bottom of this file.
+extern const char HTML_PAGE[];
+
 WebConfigServer::WebConfigServer(ConfigManager* configMgr, int port) {
     configManager = configMgr;
     serverPort = port;
@@ -17,6 +20,8 @@ WebConfigServer::WebConfigServer(ConfigManager* configMgr, int port) {
     isApMode = false;
     captureRequested = false;
     captureResult = -1;
+    wifiTestState = -1;
+    wifiTestResultRssi = 0;
 }
 
 WebConfigServer::~WebConfigServer() {
@@ -102,6 +107,12 @@ void WebConfigServer::setupRoutes() {
         }
     );
     
+    // Poll for the WiFi test result delivered by the main loop
+    server->on("/config/test/result", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        this->logRequest(request);
+        this->handleWifiTestResult(request);
+    });
+
     // Trigger image capture and upload (returns 202 immediately; work done in main loop)
     server->on("/capture", HTTP_GET, [this](AsyncWebServerRequest* request) {
         this->logRequest(request);
@@ -150,8 +161,9 @@ void WebConfigServer::setupRoutes() {
 }
 
 void WebConfigServer::handleRoot(AsyncWebServerRequest* request) {
-    String html = generateHtmlPage();
-    request->send(200, "text/html", html);
+    // HTML_PAGE is stored in flash (PROGMEM). send_P streams it in chunks
+    // without any heap allocation, avoiding async_tcp stalls on large Strings.
+    request->send_P(200, "text/html", HTML_PAGE);
 }
 
 void WebConfigServer::handleGetConfig(AsyncWebServerRequest* request) {
@@ -293,46 +305,21 @@ void WebConfigServer::handleTestConfig(AsyncWebServerRequest* request, uint8_t* 
         return;
     }
     
-    // In AP mode - test the connection live
-    Serial.printf("Testing connection to: %s (AP mode)\n", ssid.c_str());
-    
-    // Test WiFi connection
-    WiFi.begin(ssid.c_str(), password.c_str());
-    
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-        delay(500);
-        Serial.print(".");
-        attempts++;
+    // Reject if a test is already running (avoid clobbering in-flight state)
+    if (wifiTestState == 0 || wifiTestState == 1) {
+        request->send(409, "application/json",
+            "{\"success\":false,\"connected\":false,\"message\":\"WiFi test already in progress\"}");
+        return;
     }
-    Serial.println();
-    
-    if (WiFi.status() == WL_CONNECTED) {
-        // Success!
-        Serial.println("Test connection successful!");
-        Serial.printf("IP: %s\n", WiFi.localIP().toString().c_str());
-        Serial.printf("RSSI: %d dBm\n", WiFi.RSSI());
-        
-        // Build JSON response with connection details
-        String response = "{\"success\":true,\"connected\":true,\"ip\":\"" + 
-                         WiFi.localIP().toString() + 
-                         "\",\"rssi\":" + String(WiFi.RSSI()) + 
-                         ",\"message\":\"Connected successfully!\"}";
-        
-        request->send(200, "application/json", response);
-    } else {
-        // Failed
-        Serial.println("Test connection failed");
-        
-        // Try to reconnect to original WiFi if in AP+STA mode
-        String originalSsid = String(configManager->getWifiSsid());
-        if (originalSsid.length() > 0) {
-            Serial.printf("Reconnecting to original WiFi: %s\n", originalSsid.c_str());
-            WiFi.begin(originalSsid.c_str(), configManager->getWifiPassword());
-        }
-        
-        request->send(400, "application/json", "{\"success\":false,\"connected\":false,\"message\":\"Connection failed. Check SSID and password.\"}");
-    }
+
+    // Queue the test — the actual WiFi.begin() + status polling is done by the
+    // main loop so the async_tcp task is never blocked (avoids task watchdog crash).
+    Serial.printf("[WiFiTest] Queuing test for SSID: %s\n", ssid.c_str());
+    wifiTestSsid     = ssid;
+    wifiTestPassword = password;
+    wifiTestState    = 0;  // PENDING
+    request->send(202, "application/json",
+        "{\"queued\":true,\"message\":\"WiFi test queued, poll /config/test/result\"}");
 }
 
 void WebConfigServer::handleCapture(AsyncWebServerRequest* request) {
@@ -378,6 +365,36 @@ void WebConfigServer::handleCaptureResult(AsyncWebServerRequest* request) {
         // Idle — no capture was queued or result already consumed.
         request->send(200, "application/json",
             "{\"pending\":false,\"success\":false,\"message\":\"No pending capture\"}");
+    }
+}
+
+void WebConfigServer::setWifiTestResult(bool success, const String& ip, int rssi) {
+    wifiTestResultIp   = ip;
+    wifiTestResultRssi = rssi;
+    wifiTestState = success ? 2 : 3;
+}
+
+void WebConfigServer::handleWifiTestResult(AsyncWebServerRequest* request) {
+    int state = wifiTestState;
+    if (state == 0 || state == 1) {
+        // Still running
+        request->send(200, "application/json", "{\"pending\":true}");
+    } else if (state == 2) {
+        wifiTestState = -1;  // consume
+        String response = "{\"pending\":false,\"success\":true,\"connected\":true,\"ip\":\"" +
+                         wifiTestResultIp + "\",\"rssi\":" + String(wifiTestResultRssi) +
+                         ",\"message\":\"Connected successfully!\"}";
+        request->send(200, "application/json", response);
+    } else if (state == 3) {
+        wifiTestState = -1;  // consume
+        request->send(200, "application/json",
+            "{\"pending\":false,\"success\":false,\"connected\":false,"
+            "\"message\":\"Connection failed. Check SSID and password.\"}");
+    } else {
+        // IDLE — no test was started
+        request->send(200, "application/json",
+            "{\"pending\":false,\"success\":false,\"connected\":false,"
+            "\"message\":\"No WiFi test in progress\"}");
     }
 }
 
@@ -515,8 +532,10 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* request) {
     request->send(404, "text/plain", "Not found");
 }
 
-String WebConfigServer::generateHtmlPage() {
-    String html = R"=====(
+// ---------------------------------------------------------------------------
+// HTML_PAGE — stored in flash, streamed by send_P without any heap allocation
+// ---------------------------------------------------------------------------
+const char HTML_PAGE[] PROGMEM = R"=====(
 <!DOCTYPE html>
 <html>
 <head>
@@ -1007,29 +1026,72 @@ String WebConfigServer::generateHtmlPage() {
                 wifiSsid: ssid,
                 wifiPassword: password || '********'
             };
-            
-            fetch('/config/test', {
+
+            // Retry the initial POST up to 3 times — the AP can drop briefly when
+            // the radio starts scanning for the new network.
+            fetchWithRetry('/config/test', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
                 body: JSON.stringify(testData)
-            })
+            }, 3)
             .then(r => {
-                if (r.status === 401) {
-                    throw new Error('Authentication required');
-                }
-                return r.json();
+                if (r.status === 401) throw new Error('Authentication required');
+                // 202: test queued in AP mode — poll for the result non-blocking
+                if (r.status === 202) return pollWiFiTestResult(0);
+                // 200/409: synchronous result (STA mode paths, or conflict)
+                return r.json().then(showWiFiTestData);
             })
-            .then(data => {
-                if (data.connected) {
-                    showWiFiTestResult('✅ Connected! IP: ' + data.ip + ' | Signal: ' + data.rssi + ' dBm', false);
-                } else {
-                    showWiFiTestResult('❌ Connection failed: ' + data.message, true);
-                }
-            })
-            .catch(err => {
-                showWiFiTestResult('❌ Test error: ' + err, true);
+            .catch(() => {
+                showWiFiTestResult(
+                    '⚠️ Lost contact with device during test. The radio may be scanning — ' +
+                    'wait a moment, then reload the page to see the result.', true);
             });
+        }
+
+        // fetch() wrapper that retries on network errors (not on HTTP error status codes).
+        function fetchWithRetry(url, options, retries, delayMs) {
+            delayMs = delayMs || 1500;
+            return fetch(url, options).catch(function(err) {
+                if (retries <= 0) throw err;
+                return new Promise(function(resolve) {
+                    setTimeout(function() {
+                        resolve(fetchWithRetry(url, options, retries - 1, delayMs));
+                    }, delayMs);
+                });
+            });
+        }
+
+        function showWiFiTestData(data) {
+            if (data.connected) {
+                showWiFiTestResult('✅ Connected! IP: ' + data.ip + ' | Signal: ' + data.rssi + ' dBm', false);
+            } else {
+                showWiFiTestResult('❌ ' + (data.message || 'Connection failed'), true);
+            }
+        }
+
+        // Poll /config/test/result; retries on network errors caused by AP radio scan drops.
+        function pollWiFiTestResult(failures) {
+            return fetch('/config/test/result', { credentials: 'include' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.pending) {
+                        return new Promise(resolve =>
+                            setTimeout(() => resolve(pollWiFiTestResult(0)), 500));
+                    }
+                    showWiFiTestData(data);
+                })
+                .catch(() => {
+                    failures = (failures || 0) + 1;
+                    if (failures >= 6) {
+                        showWiFiTestResult(
+                            '⚠️ Lost contact with device. The radio may be scanning — ' +
+                            'wait a moment, then reload the page.', true);
+                        return;
+                    }
+                    return new Promise(resolve =>
+                        setTimeout(() => resolve(pollWiFiTestResult(failures)), 1500));
+                });
         }
 
         function saveConfig() {
@@ -1229,9 +1291,6 @@ String WebConfigServer::generateHtmlPage() {
 </body>
 </html>
 )=====";
-    
-    return html;
-}
 
 void WebConfigServer::logRequest(AsyncWebServerRequest* request) {
     Serial.printf("HTTP %s %s from %s\n", 

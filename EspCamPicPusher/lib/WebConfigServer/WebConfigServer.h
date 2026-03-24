@@ -76,6 +76,22 @@ public:
 
     /** Store the result so /capture/result can return it to the browser. */
     void setCaptureResult(bool success) { captureResult = success ? 1 : 2; }
+
+    // --- Decoupled WiFi-test helpers (called from the main loop) ---
+    // State: -1=idle, 0=pending (main loop should WiFi.begin), 1=in_progress, 2=success, 3=failed
+
+    /** Returns true when the main loop should call WiFi.begin() for a new test. */
+    bool isWifiTestPending()    const { return wifiTestState == 0; }
+    /** Returns true while the main loop polls WiFi.status() for the test result. */
+    bool isWifiTestInProgress() const { return wifiTestState == 1; }
+    /** SSID to test. Valid when isWifiTestPending() or isWifiTestInProgress(). */
+    String getWifiTestSsid()    const { return wifiTestSsid; }
+    /** Password to test. Valid when isWifiTestPending() or isWifiTestInProgress(). */
+    String getWifiTestPassword()const { return wifiTestPassword; }
+    /** Transition PENDING → IN_PROGRESS; call immediately after WiFi.begin(). */
+    void ackWifiTest() { wifiTestState = 1; }
+    /** Store the final result so /config/test/result can return it to the browser. */
+    void setWifiTestResult(bool success, const String& ip = "", int rssi = 0);
     
 private:
     AsyncWebServer* server;
@@ -93,6 +109,14 @@ private:
     volatile bool captureRequested;
     volatile int  captureResult;
 
+    // Decoupled WiFi-test state (same cross-core pattern as capture above).
+    // Written by async handler when queueing; driven by main loop to completion.
+    volatile int  wifiTestState;
+    String        wifiTestSsid;
+    String        wifiTestPassword;
+    String        wifiTestResultIp;
+    int           wifiTestResultRssi;
+
     // Setup HTTP endpoints
     void setupRoutes();
     
@@ -101,6 +125,7 @@ private:
     void handleGetConfig(AsyncWebServerRequest* request);
     void handlePostConfig(AsyncWebServerRequest* request, uint8_t* data, size_t len);
     void handleTestConfig(AsyncWebServerRequest* request, uint8_t* data, size_t len);
+    void handleWifiTestResult(AsyncWebServerRequest* request);
     void handleCapture(AsyncWebServerRequest* request);
     void handleCaptureResult(AsyncWebServerRequest* request);
     void handlePreview(AsyncWebServerRequest* request);
@@ -108,9 +133,6 @@ private:
     void handleAuthCheck(AsyncWebServerRequest* request);
     void handleReset(AsyncWebServerRequest* request);
     void handleNotFound(AsyncWebServerRequest* request);
-    
-    // HTML UI generator
-    String generateHtmlPage();
     
     // Utility
     void logRequest(AsyncWebServerRequest* request);

@@ -35,6 +35,39 @@ void runConfigMode() {
         webServer->resetActivityTimer();
     }
 
+    // Drive the non-blocking WiFi test state machine.
+    // POST /config/test queues the test (PENDING); here we initiate WiFi.begin()
+    // and poll WiFi.status() on each loop pass — no delay(), no busy wait.
+    {
+        static unsigned long wifiTestStartMs = 0;
+
+        if (webServer && webServer->isWifiTestPending()) {
+            Serial.printf("[WiFiTest] Starting test for SSID: %s\n",
+                webServer->getWifiTestSsid().c_str());
+            WiFi.begin(webServer->getWifiTestSsid().c_str(),
+                       webServer->getWifiTestPassword().c_str());
+            webServer->ackWifiTest();  // PENDING → IN_PROGRESS
+            wifiTestStartMs = millis();
+        }
+
+        if (webServer && webServer->isWifiTestInProgress()) {
+            if (WiFi.status() == WL_CONNECTED) {
+                Serial.println("[WiFiTest] Connected!");
+                Serial.printf("[WiFiTest] IP: %s, RSSI: %d dBm\n",
+                    WiFi.localIP().toString().c_str(), WiFi.RSSI());
+                webServer->setWifiTestResult(true, WiFi.localIP().toString(), WiFi.RSSI());
+            } else if (millis() - wifiTestStartMs > 15000) {
+                Serial.println("[WiFiTest] Timeout. Reconnecting to configured WiFi.");
+                const char* origSsid = configManager.getWifiSsid();
+                if (origSsid && strlen(origSsid) > 0) {
+                    Serial.printf("[WiFiTest] Reconnecting to: %s\n", origSsid);
+                    WiFi.begin(origSsid, configManager.getWifiPassword());
+                }
+                webServer->setWifiTestResult(false);
+            }
+        }
+    }
+
     static unsigned long lastCheck = 0;
     static unsigned long lastCaptureCheck = 0;
     static int lastCaptureMinute = -1; // Track last capture to prevent duplicates
