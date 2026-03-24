@@ -146,5 +146,7 @@ bool ScheduleManager::getCurrentTime(struct tm* timeinfo) {
         return false;
     }
     
-    return getLocalTime(timeinfo);
+    // Use timeout=0 (non-blocking) so async HTTP handlers are never stalled
+    // waiting for NTP sync. Callers already handle a false return gracefully.
+    return getLocalTime(timeinfo, 0);
 }
